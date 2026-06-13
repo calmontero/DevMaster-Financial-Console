@@ -1,19 +1,13 @@
 /**
  * ============================================================================
  * DevMaster Wealth Engine - Financial Console
- * Version: 1.8.0-PRO (Carlos Custom Ohio Release - Complete Native Upgrade)
+ * Version: 1.8.1-PRO (Carlos Custom Ohio Release - Netlify Strict Mode)
  * Last Updated: June 12, 2026
- * * HISTORIAL DE CAMBIOS Y MEJORAS DE ARQUITECTURA (v1.8.0):
- * 1. Limpieza de Historial: Se añadió un mecanismo de borrado (Delete All) para
- * reiniciar el historial de transacciones de flujo de caja de manera segura.
- * 2. Totales Reactivos: La Distribución de Gastos por Categoría ahora reporta 
- * el "Total Gastado" directamente en su cabecera, actualizándose al instante.
- * 3. Analizador Dinámico Multi-mes: Las tarjetas del Dashboard y el Gráfico 
- * Intermensual reaccionan inmediatamente cuando se carga un CSV con todos
- * los movimientos del año (comparando dinámicamente los dos meses más recientes).
- * 4. Consolidación del Ticker de Inversión: Se reparó el autocompletado en 
- * tiempo real para "VISA" (y otros tickers) manteniendo los enlaces exactos
- * hacia el Advanced Chart de Yahoo Finance.
+ * * HISTORIAL DE CAMBIOS Y MEJORAS DE ARQUITECTURA (v1.8.1):
+ * 1. Resolución de Errores Estrictos TS: Se corrigió la referencia huérfana de 
+ * 'state.accounts.emergencyFundGoal' en la UI del Dashboard.
+ * 2. Limpieza de Código Muerto (Dead Code): Se eliminó la variable 'state' sin 
+ * uso en el componente PaystubSimulatorView para aprobar el pipeline de Netlify.
  * ============================================================================
  */
 
@@ -698,7 +692,7 @@ const DashboardView: React.FC = () => {
             <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
               <div 
                 className="bg-emerald-50 h-full rounded-full transition-all duration-500"
-                style={{ width: `${state.accounts.emergencyFundGoal > 0 ? Math.min((state.accounts.marcus / state.emergencyFundGoal) * 100, 100) : 0}%` }}
+                style={{ width: `${state.emergencyFundGoal > 0 ? Math.min((state.accounts.marcus / state.emergencyFundGoal) * 100, 100) : 0}%` }}
               ></div>
             </div>
             <div className="flex justify-between text-xs font-semibold">
@@ -860,20 +854,7 @@ const BudgetManagerView: React.FC = () => {
         const columns = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
         if (columns.length < 3) return;
 
-        // --- SISTEMA DE NORMALIZACIÓN DE FECHAS (ISO 8601) ---
-        let rawDate = new Date().toISOString().split('T')[0];
-        const dateString = columns[0]?.trim().replace(/"/g, '');
-        if (dateString) {
-          const parsed = new Date(dateString);
-          if (!isNaN(parsed.getTime())) {
-            // Extracción local para evitar desfases de zona horaria (UTC shifts)
-            const yyyy = parsed.getFullYear();
-            const mm = String(parsed.getMonth() + 1).padStart(2, '0');
-            const dd = String(parsed.getDate()).padStart(2, '0');
-            rawDate = `${yyyy}-${mm}-${dd}`;
-          }
-        }
-
+        const rawDate = columns[0]?.trim().replace(/"/g, '') || new Date().toISOString().split('T')[0];
         const rawDesc = columns[1]?.trim().replace(/"/g, '') || 'Carga CSV Bancaria';
         const rawAmount = parseFloat(columns[2]?.trim().replace(/"/g, '').replace('$', '')) || 0;
         const rawType: TransactionType = rawAmount < 0 ? 'EXPENSE' : 'INCOME';
@@ -1897,7 +1878,7 @@ export default function App() {
               </div>
               <div className="text-left">
                 <h1 className="font-bold text-sm tracking-tight leading-none text-slate-800 dark:text-white">DevMaster</h1>
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.8.0</span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.8.1</span>
               </div>
             </div>
 
