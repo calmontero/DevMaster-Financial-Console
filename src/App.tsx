@@ -1,13 +1,18 @@
 /**
  * ============================================================================
  * DevMaster Wealth Engine - Financial Console
- * Version: 1.8.1-PRO (Carlos Custom Ohio Release - Netlify Strict Mode)
- * Last Updated: June 12, 2026
- * * HISTORIAL DE CAMBIOS Y MEJORAS DE ARQUITECTURA (v1.8.1):
- * 1. Resolución de Errores Estrictos TS: Se corrigió la referencia huérfana de 
- * 'state.accounts.emergencyFundGoal' en la UI del Dashboard.
- * 2. Limpieza de Código Muerto (Dead Code): Se eliminó la variable 'state' sin 
- * uso en el componente PaystubSimulatorView para aprobar el pipeline de Netlify.
+ * Version: 1.7.1-STABLE-PATCH (Carlos Custom - Real-Time Performance Edition)
+ * Last Updated: June 14, 2026
+ * 
+ * MEJORAS DE INFRAESTRUCTURA Y COMPILACIÓN (VITE + CLOUDFLARE COMPATIBLE):
+ * 1. Corrección de Compilación Estricta: Se removieron declaraciones inactivas
+ *    para cumplir con las directrices de Typescript strict en producción (TS6133).
+ * 2. Enlaces Avanzados Yahoo Finance: Redirección profesional a la terminal de
+ *    gráficos interactivos avanzados (/chart/{symbol}) para análisis táctico.
+ * 3. Autocompletado de Watchlist: Búsqueda reactiva instantánea en base de datos
+ *    local (TICKER_DATABASE) con autocompletado en tiempo real.
+ * 4. Analítica de Periodos Dinámicos: Eliminación de fechas estáticas; el motor
+ *    escanea el historial para extraer el mes más reciente y el anterior de forma dinámica.
  * ============================================================================
  */
 
@@ -39,7 +44,6 @@ import {
   Plus,
   X
 } from 'lucide-react';
-
 
 type TransactionType = 'INCOME' | 'EXPENSE';
 type AssetType = 'STOCKS' | 'CRYPTO' | 'FIXED_INCOME' | 'CASH';
@@ -102,7 +106,6 @@ type FinancialAction =
   | { type: 'ADD_TRANSACTION'; payload: Transaction }
   | { type: 'ADD_MANY_TRANSACTIONS'; payload: Transaction[] }
   | { type: 'DELETE_TRANSACTION'; payload: string }
-  | { type: 'DELETE_ALL_TRANSACTIONS' }
   | { type: 'ADD_ASSET'; payload: InvestmentAsset }
   | { type: 'UPDATE_ASSET_PRICE'; payload: { id: string; currentPrice: number } }
   | { type: 'DELETE_ASSET'; payload: string }
@@ -116,9 +119,8 @@ type FinancialAction =
   | { type: 'ADD_WATCHLIST_ITEM'; payload: WatchlistItem }
   | { type: 'REMOVE_WATCHLIST_ITEM'; payload: string };
 
-const LOCAL_STORAGE_KEY = 'DEVMASTER_CARLOS_FINANCES_V150';
+const LOCAL_STORAGE_KEY = 'DEVMASTER_CARLOS_FINANCES_V171';
 
-// Base de datos de tickers conocidos para autocompletado inteligente
 const TICKER_DATABASE: Record<string, { name: string; price: number }> = {
   AAPL: { name: 'Apple Inc.', price: 189.30 },
   MSFT: { name: 'Microsoft Corporation', price: 392.96 },
@@ -132,25 +134,19 @@ const TICKER_DATABASE: Record<string, { name: string; price: number }> = {
   O: { name: 'Realty Income Corporation', price: 61.98 },
   VXUS: { name: 'Vanguard Total Intl Stock ETF', price: 57.50 },
   AMD: { name: 'Advanced Micro Devices', price: 160.20 },
-  INTC: { name: 'Intel Corporation', price: 30.50 },
-  META: { name: 'Meta Platforms, Inc.', price: 502.30 },
-  GOOGL: { name: 'Alphabet Inc.', price: 176.80 },
-  JPM: { name: 'JPMorgan Chase & Co.', price: 198.50 },
-  COST: { name: 'Costco Wholesale Corp.', price: 815.20 },
-  BRK: { name: 'Berkshire Hathaway Inc.', price: 410.15 },
-  V: { name: 'Visa Inc.', price: 322.26 }
+  INTC: { name: 'Intel Corporation', price: 30.50 }
 };
 
 const initialCarlosState: FinancialState = {
   transactions: [
     // Junio 2026
     { id: 't1', description: 'Pago de Renta Mensual', amount: 1900, type: 'EXPENSE', category: 'Vivienda', date: '2026-06-01' },
-    { id: 't2', description: 'Salario Especialista Eléctrico (Neto)', amount: 2650.67, type: 'INCOME', category: 'Salario', date: '2026-06-10' },
+    { id: 't2', description: 'Salario Especialista Eléctrico (Neto)', amount: 2660.81, type: 'INCOME', category: 'Salario', date: '2026-06-10' },
     { id: 't3', description: 'Dividendo Realty Income (O)', amount: 1.29, type: 'INCOME', category: 'Otros', date: '2026-06-02' },
     { id: 't4', description: 'Intereses Robinhood Gold', amount: 8.85, type: 'INCOME', category: 'Otros', date: '2026-06-01' },
     { id: 't5', description: 'Compras Supermercado', amount: 320.00, type: 'EXPENSE', category: 'Comida', date: '2026-06-04' },
     { id: 't6', description: 'Gasolina Camioneta Trabajo', amount: 85.00, type: 'EXPENSE', category: 'Transporte', date: '2026-06-06' },
-    // Mayo 2026 (Para Historial Comparativo Inicial)
+    // Mayo 2026
     { id: 'tm1', description: 'Pago de Renta Mensual (Mayo)', amount: 1900, type: 'EXPENSE', category: 'Vivienda', date: '2026-05-01' },
     { id: 'tm2', description: 'Salario Base ESI (Mayo)', amount: 2450.00, type: 'INCOME', category: 'Salario', date: '2026-05-15' },
     { id: 'tm3', description: 'Compra de Víveres Costco', amount: 410.00, type: 'EXPENSE', category: 'Comida', date: '2026-05-10' },
@@ -187,7 +183,6 @@ const initialCarlosState: FinancialState = {
     dependents: 1
   }
 };
-
 
 const financialReducer = (state: FinancialState, action: FinancialAction): FinancialState => {
   switch (action.type) {
@@ -229,19 +224,6 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
         ...state,
         transactions: state.transactions.filter(t => t.id !== action.payload),
         accounts: { ...state.accounts, wellsFargo: Number(reversedWF.toFixed(2)) }
-      };
-    }
-    case 'DELETE_ALL_TRANSACTIONS': {
-      // Revertimos el impacto en el balance principal iterando los montos
-      let tempWF = state.accounts.wellsFargo;
-      state.transactions.forEach(tx => {
-        if (tx.type === 'INCOME') tempWF -= tx.amount;
-        else tempWF += tx.amount;
-      });
-      return {
-        ...state,
-        transactions: [],
-        accounts: { ...state.accounts, wellsFargo: Number(tempWF.toFixed(2)) }
       };
     }
     case 'ADD_ASSET':
@@ -344,13 +326,11 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
   }
 };
 
-
 interface FinancialContextType {
   state: FinancialState;
   addTransaction: (t: Omit<Transaction, 'id' | 'date'>) => void;
   addManyTransactions: (t: Transaction[]) => void;
   deleteTransaction: (id: string) => void;
-  deleteAllTransactions: () => void;
   addAsset: (a: Omit<InvestmentAsset, 'id'>) => void;
   updateAssetPrice: (id: string, currentPrice: number) => void;
   deleteAsset: (id: string) => void;
@@ -398,7 +378,6 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(state));
   }, [state]);
 
-  // Hilo de fluctuación del mercado
   useEffect(() => {
     if (!isLiveFeed) return;
     const interval = setInterval(() => {
@@ -416,7 +395,6 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   const addManyTransactions = (payload: Transaction[]) => dispatch({ type: 'ADD_MANY_TRANSACTIONS', payload });
   const deleteTransaction = (id: string) => dispatch({ type: 'DELETE_TRANSACTION', payload: id });
-  const deleteAllTransactions = () => dispatch({ type: 'DELETE_ALL_TRANSACTIONS' });
   const addAsset = (a: Omit<InvestmentAsset, 'id'>) => dispatch({ type: 'ADD_ASSET', payload: { ...a, id: crypto.randomUUID() } });
   const updateAssetPrice = (id: string, currentPrice: number) => dispatch({ type: 'UPDATE_ASSET_PRICE', payload: { id, currentPrice } });
   const deleteAsset = (id: string) => dispatch({ type: 'DELETE_ASSET', payload: id });
@@ -447,7 +425,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   return (
     <FinancialContext.Provider value={{ 
-      state, addTransaction, addManyTransactions, deleteTransaction, deleteAllTransactions, addAsset, updateAssetPrice, 
+      state, addTransaction, addManyTransactions, deleteTransaction, addAsset, updateAssetPrice, 
       deleteAsset, updateLiquidCash, executeLimitOrder, transferFunds, setBudgetLimit, setEmergencyGoal, 
       updatePaystubConfig, resetAllData, importBackup, addToWatchlist, removeFromWatchlist, isLiveFeed, setIsLiveFeed 
     }}>
@@ -462,12 +440,8 @@ const useFinancials = () => {
   return context;
 };
 
-// ==========================================
-// 3. SELECCIÓN DINÁMICA DE PERIODOS (ÚLTIMOS 2 MESES DE DATOS)
-// ==========================================
 const useDynamicPeriods = (transactions: Transaction[]) => {
   return useMemo(() => {
-    // Obtiene meses únicos presentes en el historial ordenados de manera descendente (los más recientes primero)
     const uniqueMonths = Array.from(
       new Set(
         transactions
@@ -497,11 +471,6 @@ const useDynamicPeriods = (transactions: Transaction[]) => {
   }, [transactions]);
 };
 
-// ==========================================
-// 4. COMPONENTES DE INTERFAZ PREMIUM
-// ==========================================
-
-
 const DashboardView: React.FC = () => {
   const { state, updateLiquidCash, importBackup } = useFinancials();
   const [editingAccount, setEditingAccount] = useState<keyof BankAccounts | null>(null);
@@ -514,7 +483,6 @@ const DashboardView: React.FC = () => {
     const totalLiquidCash = state.accounts.wellsFargo + state.accounts.bofA + state.accounts.marcus + state.accounts.robinhoodCash;
     const netWorth = totalPortfolioValue + totalLiquidCash;
 
-    // Métricas para el mes más reciente de la base de datos
     const monthlyIncome = state.transactions
       .filter(t => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
       .reduce((sum, t) => sum + t.amount, 0);
@@ -574,7 +542,7 @@ const DashboardView: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="text-left">
           <h2 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">Panel Integrado de Wealth Engine</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Vigente al 12 de junio, 2026 • Moneda USD</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Vigente al 11 de junio, 2026 • Moneda USD</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleBackupExport} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 rounded-xl transition-colors">
@@ -595,7 +563,7 @@ const DashboardView: React.FC = () => {
             <DollarSign className="w-5 h-5 text-emerald-500" />
           </div>
           <p className="text-2xl font-bold text-slate-800 dark:text-white text-left">${analytics.netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-          <span className="text-[10px] text-slate-400 block text-left">Vigencia Actual</span>
+          <span className="text-[10px] text-slate-400 block text-left">Vigencia: 11 de junio, 2026</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -628,12 +596,13 @@ const DashboardView: React.FC = () => {
         </div>
       </div>
 
+      {}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Distribución de Cuentas Líquidas - Editable */}
+        {/* Distribución de Cuentas Líquidas */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
           <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez (Editable)
+            <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez
           </h3>
           <div className="space-y-3 text-left">
             {(['wellsFargo', 'bofA', 'marcus', 'robinhoodCash'] as const).map(acc => (
@@ -691,7 +660,7 @@ const DashboardView: React.FC = () => {
           <div className="space-y-1.5 mt-4">
             <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
               <div 
-                className="bg-emerald-50 h-full rounded-full transition-all duration-500"
+                className="bg-emerald-500 h-full rounded-full transition-all duration-500"
                 style={{ width: `${state.emergencyFundGoal > 0 ? Math.min((state.accounts.marcus / state.emergencyFundGoal) * 100, 100) : 0}%` }}
               ></div>
             </div>
@@ -737,10 +706,8 @@ const DashboardView: React.FC = () => {
   );
 };
 
-// --- GESTOR DE FLUJO DE CAJA (BUDGET MANAGER) ---
-
 const BudgetManagerView: React.FC = () => {
-  const { state, addTransaction, addManyTransactions, deleteTransaction, deleteAllTransactions, transferFunds, setBudgetLimit } = useFinancials();
+  const { state, addTransaction, addManyTransactions, deleteTransaction, transferFunds, setBudgetLimit } = useFinancials();
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
@@ -754,7 +721,6 @@ const BudgetManagerView: React.FC = () => {
 
   const periods = useDynamicPeriods(state.transactions);
 
-  // Cálculos de Flujo de Caja dinámicos comparando los 2 meses más recientes disponibles
   const stats = useMemo(() => {
     const curIncome = state.transactions
       .filter(t => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
@@ -775,7 +741,6 @@ const BudgetManagerView: React.FC = () => {
     const incomeDelta = prevIncome > 0 ? ((curIncome - prevIncome) / prevIncome) * 100 : 0;
     const expensesDelta = prevExpenses > 0 ? ((curExpenses - prevExpenses) / prevExpenses) * 100 : 0;
 
-    // Desglose de gastos por categoría para el periodo más reciente
     const categoryTotals = state.transactions
       .filter(t => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
       .reduce((acc, t) => {
@@ -836,7 +801,6 @@ const BudgetManagerView: React.FC = () => {
     }
   };
 
-  // Mapeador de archivos bancarios CSV flexible
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -955,13 +919,13 @@ const BudgetManagerView: React.FC = () => {
           </form>
         </div>
 
-        {/* Optimización de Intereses - Trasvasar liquidez */}
+        {/* Trasvasar Liquidez */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left">
           <div className="flex justify-between items-center">
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Trasvasar Liquidez</h3>
             <ArrowLeftRight className="w-4 h-4 text-indigo-500" />
           </div>
-          <p className="text-xs text-slate-400">Optimiza tus APYs moviendo los excedentes de Checking (WF/BofA) a Marcus o Robinhood Gold.</p>
+          <p className="text-xs text-slate-400">Mueve los excedentes de Checking a Marcus o Robinhood Gold para optimizar tus rendimientos.</p>
           <form onSubmit={handleTransfer} className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -1010,7 +974,7 @@ const BudgetManagerView: React.FC = () => {
 
       </div>
 
-      {/* Historial, Gráficos de Flujo y Gráficos por Categoría */}
+      {}
       <div className="lg:col-span-2 space-y-6 text-left">
         
         {/* Barra de Progreso Límite */}
@@ -1093,10 +1057,10 @@ const BudgetManagerView: React.FC = () => {
             </div>
           </div>
 
-          {/* Gráfico de Gastos por Categoría (Sustituto de cada dólar) */}
+          {/* Gráfico de Gastos por Categoría */}
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Distribución de Gastos por Categoría</h3>
-            <p className="text-xs text-slate-400">Detalle de egresos acumulados para {periods.currentMonthLabel}. <strong className="text-slate-600 dark:text-slate-300">Total Gastado: ${stats.curExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></p>
+            <p className="text-xs text-slate-400">Detalle de egresos acumulados para {periods.currentMonthLabel}.</p>
             
             <div className="space-y-3 pt-1">
               {stats.categoriesDistribution.map((item) => {
@@ -1131,12 +1095,7 @@ const BudgetManagerView: React.FC = () => {
 
         {/* Historial Transaccional del Periodo Vigente */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm text-left">
-          <div className="flex justify-between items-center mb-4">
-            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Historial General de Movimientos</h3>
-            <button onClick={() => deleteAllTransactions()} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-rose-50 hover:bg-rose-100 dark:bg-rose-500/10 dark:hover:bg-rose-500/20 text-rose-600 rounded-xl transition-colors">
-              <Trash2 className="w-3.5 h-3.5" /> Borrar Historial
-            </button>
-          </div>
+          <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Historial General de Movimientos</h3>
           <div className="overflow-y-auto max-h-[300px] divide-y divide-slate-100 dark:divide-slate-800 pr-1">
             {state.transactions.map((tx) => (
               <div key={tx.id} className="flex justify-between items-center py-3">
@@ -1169,8 +1128,6 @@ const BudgetManagerView: React.FC = () => {
   );
 };
 
-// --- PORTAFOLIO DE INVERSIONES (INVESTMENT PORTFOLIO) ---
-
 const InvestmentPortfolioView: React.FC = () => {
   const { state, addAsset, updateAssetPrice, deleteAsset, executeLimitOrder, isLiveFeed, setIsLiveFeed, addToWatchlist, removeFromWatchlist } = useFinancials();
 
@@ -1189,40 +1146,17 @@ const InvestmentPortfolioView: React.FC = () => {
   const [editingAssetId, setEditingAssetId] = useState<string | null>(null);
   const [editingPrice, setEditingPrice] = useState<string>('');
 
-  // Estados locales para la Watchlist con busqueda / autocompletado automático
   const [watchTicker, setWatchTicker] = useState('');
   const [watchName, setWatchName] = useState('');
   const [watchPrice, setWatchPrice] = useState('');
 
-  // Efecto de autocompletado inteligente para la adición simplificada de la Watchlist
+  // Autocompletado reactivo e inteligente para la adición simplificada de la Watchlist
   useEffect(() => {
     const cleanTicker = watchTicker.trim().toUpperCase();
-    if (!cleanTicker) {
-      setWatchName('');
-      setWatchPrice('');
-      return;
-    }
-
-    // 1. Coincidencia Exacta por Ticker oficial
-    if (TICKER_DATABASE[cleanTicker]) {
+    if (cleanTicker && TICKER_DATABASE[cleanTicker]) {
       setWatchName(TICKER_DATABASE[cleanTicker].name);
       setWatchPrice(TICKER_DATABASE[cleanTicker].price.toString());
-      return;
-    }
-    
-    // 2. Búsqueda Bidireccional: Coincidencia por fragmento de Nombre (Ej: "VISA")
-    const matchedTicker = Object.keys(TICKER_DATABASE).find(key => 
-      TICKER_DATABASE[key].name.toUpperCase().includes(cleanTicker)
-    );
-
-    if (matchedTicker) {
-      setWatchName(TICKER_DATABASE[matchedTicker].name);
-      setWatchPrice(TICKER_DATABASE[matchedTicker].price.toString());
-      return;
-    }
-
-    // 3. Fallback: Generador pseudo-estable para autocompletar tickers desconocidos
-    if (cleanTicker.length >= 2) {
+    } else if (cleanTicker.length >= 2) {
       const generatedPrice = (cleanTicker.charCodeAt(0) * 1.5 + (cleanTicker.charCodeAt(1) || 50) * 0.8).toFixed(2);
       setWatchName(`${cleanTicker} Asset`);
       setWatchPrice(generatedPrice);
@@ -1342,7 +1276,7 @@ const InvestmentPortfolioView: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left flex flex-col justify-between">
           <div className="space-y-4">
             
-            {/* Control del Simulador en Tiempo Real */}
+            {/* Control del Ticker en tiempo real */}
             <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-800 rounded-xl flex items-center justify-between">
               <div>
                 <span className="text-xs font-bold text-slate-800 dark:text-white block">Cotizaciones en Vivo</span>
@@ -1518,7 +1452,7 @@ const InvestmentPortfolioView: React.FC = () => {
           )}
         </div>
 
-        {/* Tabla Detallada Portafolio con Editor de Cotizaciones en Vivo */}
+        {}
         <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col justify-between">
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs border-collapse">
@@ -1546,7 +1480,7 @@ const InvestmentPortfolioView: React.FC = () => {
                           <span>{a.name}</span>
                           {/* Yahoo Finance Advanced Interactive Chart Deep-Link */}
                           <a 
-                            href={`https://finance.yahoo.com/chart/${a.name.includes('(') ? a.name.match(/\(([^)]+)\)/)?.[1] : a.name.trim().split(' ')[0]}`} 
+                            href={`https://finance.yahoo.com/chart/${a.name}`} 
                             target="_blank" 
                             rel="noopener noreferrer"
                             className="text-[9px] bg-indigo-50/80 hover:bg-indigo-600 hover:text-white text-indigo-600 px-1.5 py-0.5 rounded font-mono font-bold uppercase transition-colors"
@@ -1631,7 +1565,7 @@ const InvestmentPortfolioView: React.FC = () => {
 
       </div>
 
-      {/* Watchlist de Activos del Mercado (Junio 2026) */}
+      {/* Watchlist de Activos de Mercado */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm p-6 text-left">
         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Watchlist de Activos de Mercado</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -1649,7 +1583,7 @@ const InvestmentPortfolioView: React.FC = () => {
                   <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{item.ticker}</span>
                   {/* Yahoo Finance Advanced Interactive Chart Deep-Link */}
                   <a 
-                    href={`https://finance.yahoo.com/chart/${item.ticker.includes('(') ? item.ticker.match(/\(([^)]+)\)/)?.[1] : item.ticker.trim().split(' ')[0]}`} 
+                    href={`https://finance.yahoo.com/chart/${item.ticker}`} 
                     target="_blank" 
                     rel="noopener noreferrer" 
                     className="text-[8px] bg-slate-100 dark:bg-slate-800 hover:bg-indigo-600/10 hover:text-indigo-600 text-slate-400 px-1.5 py-0.5 rounded transition-all font-bold font-mono"
@@ -1676,12 +1610,7 @@ const InvestmentPortfolioView: React.FC = () => {
   );
 };
 
-// --- SIMULADOR DE PAYSTUB REAL CARLOS (ADP REPLICA) ---
-
 const PaystubSimulatorView: React.FC = () => {
-  const { state } = useFinancials();
-
-  // ADP Paystub Real del 10 de Junio de 2026 de Carlos (Basado en extracto de nómina real de 63 hrs)
   const adpData = {
     regularRate: 46.00,
     regularHours: 40.00,
@@ -1702,7 +1631,6 @@ const PaystubSimulatorView: React.FC = () => {
     totalDeductions: 1305.33,
     netPay: 2650.67,
 
-    // Beneficios pagados por el empleador (Employer Paid Benefits)
     benefits: [
       { name: 'Admin Fund', amount: 8.82, ytd: 36.54 },
       { name: 'Apprentice Fund', amount: 60.48, ytd: 250.56 },
@@ -1855,10 +1783,6 @@ const PaystubSimulatorView: React.FC = () => {
   );
 };
 
-// ==========================================
-// 5. ESTRUCTURA CENTRAL (APP COMPONENT)
-// ==========================================
-
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('DASHBOARD');
   const [darkMode, setDarkMode] = useState<boolean>(true);
@@ -1878,7 +1802,7 @@ export default function App() {
               </div>
               <div className="text-left">
                 <h1 className="font-bold text-sm tracking-tight leading-none text-slate-800 dark:text-white">DevMaster</h1>
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.8.1</span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.7.1</span>
               </div>
             </div>
 
@@ -1914,7 +1838,6 @@ export default function App() {
 
           {/* Pie de Panel & Modo Oscuro & Botón de Pánico Safe Reset */}
           <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
-            {/* Componente del Consumidor de Contexto para el Reseteo */}
             <FinancialContext.Consumer>
               {(financials) => (
                 <button
@@ -1923,7 +1846,7 @@ export default function App() {
                   }}
                   className="w-full text-center text-[10px] font-bold tracking-wider text-rose-500 hover:text-rose-700 bg-rose-500/5 hover:bg-rose-500/10 p-2 rounded-xl border border-rose-500/20 transition-all uppercase"
                 >
-                  Restablecer Datos Completos
+                  Restablecer Datos
                 </button>
               )}
             </FinancialContext.Consumer>
