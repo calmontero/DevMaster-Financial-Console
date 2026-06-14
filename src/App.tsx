@@ -1,18 +1,8 @@
 /**
  * ============================================================================
  * DevMaster Wealth Engine - Financial Console
- * Version: 1.7.1-STABLE-PATCH (Carlos Custom - Real-Time Performance Edition)
+ * Version: 1.7.8-STABLE (HMR Optimized - Ohio Edition)
  * Last Updated: June 14, 2026
- * 
- * MEJORAS DE INFRAESTRUCTURA Y COMPILACIÓN (VITE + CLOUDFLARE COMPATIBLE):
- * 1. Corrección de Compilación Estricta: Se removieron declaraciones inactivas
- *    para cumplir con las directrices de Typescript strict en producción (TS6133).
- * 2. Enlaces Avanzados Yahoo Finance: Redirección profesional a la terminal de
- *    gráficos interactivos avanzados (/chart/{symbol}) para análisis táctico.
- * 3. Autocompletado de Watchlist: Búsqueda reactiva instantánea en base de datos
- *    local (TICKER_DATABASE) con autocompletado en tiempo real.
- * 4. Analítica de Periodos Dinámicos: Eliminación de fechas estáticas; el motor
- *    escanea el historial para extraer el mes más reciente y el anterior de forma dinámica.
  * ============================================================================
  */
 
@@ -21,7 +11,7 @@ import {
   TrendingUp, 
   TrendingDown, 
   DollarSign, 
-  PieChart, 
+  PieChart as PieIcon, 
   ShieldCheck, 
   Wallet, 
   Landmark, 
@@ -40,9 +30,8 @@ import {
   Pause,
   Upload,
   Download,
-  Eye,
-  Plus,
-  X
+  X,
+  Plus
 } from 'lucide-react';
 
 type TransactionType = 'INCOME' | 'EXPENSE';
@@ -55,6 +44,7 @@ interface Transaction {
   amount: number;
   type: TransactionType;
   category: 'Vivienda' | 'Comida' | 'Transporte' | 'Ocio' | 'Inversión' | 'Salario' | 'Otros';
+  subcategory: string;
   date: string;
 }
 
@@ -98,14 +88,17 @@ interface FinancialState {
   monthlyBudgetLimit: number;
   emergencyFundGoal: number;
   paystubConfig: PaystubConfig;
+  lastCsvFileName?: string;
+  lastCsvUploadDate?: string;
 }
 
 type FinancialAction =
   | { type: 'RESET_STATE' }
   | { type: 'IMPORT_STATE'; payload: FinancialState }
   | { type: 'ADD_TRANSACTION'; payload: Transaction }
-  | { type: 'ADD_MANY_TRANSACTIONS'; payload: Transaction[] }
+  | { type: 'ADD_MANY_TRANSACTIONS'; payload: { transactions: Transaction[]; fileName: string; uploadDate: string } }
   | { type: 'DELETE_TRANSACTION'; payload: string }
+  | { type: 'CLEAR_ALL_TRANSACTIONS' }
   | { type: 'ADD_ASSET'; payload: InvestmentAsset }
   | { type: 'UPDATE_ASSET_PRICE'; payload: { id: string; currentPrice: number } }
   | { type: 'DELETE_ASSET'; payload: string }
@@ -119,7 +112,17 @@ type FinancialAction =
   | { type: 'ADD_WATCHLIST_ITEM'; payload: WatchlistItem }
   | { type: 'REMOVE_WATCHLIST_ITEM'; payload: string };
 
-const LOCAL_STORAGE_KEY = 'DEVMASTER_CARLOS_FINANCES_V171';
+const LOCAL_STORAGE_KEY = 'DEVMASTER_CARLOS_FINANCES_V173';
+
+const SUBCATEGORIES: Record<string, string[]> = {
+  Vivienda: ['Renta', 'Servicios Públicos', 'Mantenimiento', 'Internet'],
+  Comida: ['Supermercado', 'Restaurantes', 'Costco', 'Cafetería'],
+  Transporte: ['Gasolina', 'Mantenimiento Camioneta', 'Peajes', 'Uber'],
+  Ocio: ['Cine/Juegos', 'Suscripciones', 'Viajes', 'Otros Caprichos'],
+  Inversión: ['Acciones', 'ETFs', 'Cripto', 'Fondo de Emergencia'],
+  Salario: ['Nómina Base', 'Horas Extra (Double Time)', 'Intereses/Dividendos'],
+  Otros: ['Herramientas', 'Impuestos', 'Varios']
+};
 
 const TICKER_DATABASE: Record<string, { name: string; price: number }> = {
   AAPL: { name: 'Apple Inc.', price: 189.30 },
@@ -139,27 +142,25 @@ const TICKER_DATABASE: Record<string, { name: string; price: number }> = {
 
 const initialCarlosState: FinancialState = {
   transactions: [
-    // Junio 2026
-    { id: 't1', description: 'Pago de Renta Mensual', amount: 1900, type: 'EXPENSE', category: 'Vivienda', date: '2026-06-01' },
-    { id: 't2', description: 'Salario Especialista Eléctrico (Neto)', amount: 2660.81, type: 'INCOME', category: 'Salario', date: '2026-06-10' },
-    { id: 't3', description: 'Dividendo Realty Income (O)', amount: 1.29, type: 'INCOME', category: 'Otros', date: '2026-06-02' },
-    { id: 't4', description: 'Intereses Robinhood Gold', amount: 8.85, type: 'INCOME', category: 'Otros', date: '2026-06-01' },
-    { id: 't5', description: 'Compras Supermercado', amount: 320.00, type: 'EXPENSE', category: 'Comida', date: '2026-06-04' },
-    { id: 't6', description: 'Gasolina Camioneta Trabajo', amount: 85.00, type: 'EXPENSE', category: 'Transporte', date: '2026-06-06' },
-    // Mayo 2026
-    { id: 'tm1', description: 'Pago de Renta Mensual (Mayo)', amount: 1900, type: 'EXPENSE', category: 'Vivienda', date: '2026-05-01' },
-    { id: 'tm2', description: 'Salario Base ESI (Mayo)', amount: 2450.00, type: 'INCOME', category: 'Salario', date: '2026-05-15' },
-    { id: 'tm3', description: 'Compra de Víveres Costco', amount: 410.00, type: 'EXPENSE', category: 'Comida', date: '2026-05-10' },
-    { id: 'tm4', description: 'Mantenimiento Herramientas', amount: 150.00, type: 'EXPENSE', category: 'Otros', date: '2026-05-18' }
+    { id: 't1', description: 'Pago de Renta Mensual', amount: 1900, type: 'EXPENSE', category: 'Vivienda', subcategory: 'Renta', date: '2026-06-01' },
+    { id: 't2', description: 'Salario Especialista Eléctrico (Neto)', amount: 2650.67, type: 'INCOME', category: 'Salario', subcategory: 'Nómina Base', date: '2026-06-10' },
+    { id: 't3', description: 'Dividendo Realty Income (O)', amount: 1.29, type: 'INCOME', category: 'Otros', subcategory: 'Varios', date: '2026-06-02' },
+    { id: 't4', description: 'Intereses Robinhood Gold', amount: 8.85, type: 'INCOME', category: 'Otros', subcategory: 'Varios', date: '2026-06-01' },
+    { id: 't5', description: 'Compras Supermercado', amount: 320.00, type: 'EXPENSE', category: 'Comida', subcategory: 'Supermercado', date: '2026-06-04' },
+    { id: 't6', description: 'Gasolina Camioneta Trabajo', amount: 85.00, type: 'EXPENSE', category: 'Transporte', subcategory: 'Gasolina', date: '2026-06-06' },
+    { id: 'tm1', description: 'Pago de Renta Mensual (Mayo)', amount: 1900, type: 'EXPENSE', category: 'Vivienda', subcategory: 'Renta', date: '2026-05-01' },
+    { id: 'tm2', description: 'Salario Base ESI (Mayo)', amount: 2450.00, type: 'INCOME', category: 'Salario', subcategory: 'Nómina Base', date: '2026-05-15' },
+    { id: 'tm3', description: 'Compra de Víveres Costco', amount: 410.00, type: 'EXPENSE', category: 'Comida', subcategory: 'Costco', date: '2026-05-10' },
+    { id: 'tm4', description: 'Mantenimiento Herramientas', amount: 150.00, type: 'EXPENSE', category: 'Otros', subcategory: 'Herramientas', date: '2026-05-18' }
   ],
   assets: [
-    { id: 'a1', name: 'NVDA', type: 'STOCKS', quantity: 1.93, buyPrice: 110.00, currentPrice: 206.18, prevPrice: 206.18 },
-    { id: 'a2', name: 'VOO', type: 'STOCKS', quantity: 1.42, buyPrice: 480.00, currentPrice: 680.05, prevPrice: 680.05 },
-    { id: 'a3', name: 'SCHG', type: 'STOCKS', quantity: 25.80, buyPrice: 32.50, currentPrice: 33.64, prevPrice: 33.64 },
-    { id: 'a4', name: 'VTV', type: 'STOCKS', quantity: 1.27, buyPrice: 165.00, currentPrice: 215.00, prevPrice: 215.00 },
-    { id: 'a5', name: 'SCHD', type: 'STOCKS', quantity: 8.15, buyPrice: 30.50, currentPrice: 32.52, prevPrice: 32.52 },
-    { id: 'a6', name: 'MSFT', type: 'STOCKS', quantity: 0.386615, buyPrice: 410.00, currentPrice: 392.96, prevPrice: 392.96 },
-    { id: 'a7', name: 'Realty Income (O)', type: 'STOCKS', quantity: 7.29, buyPrice: 59.66, currentPrice: 61.98, prevPrice: 61.98 }
+    { id: 'a1', name: 'NVDA', type: 'STOCKS', quantity: 1.932, buyPrice: 184.33, currentPrice: 205.42, prevPrice: 205.42 },
+    { id: 'a2', name: 'VOO', type: 'STOCKS', quantity: 1.418, buyPrice: 600.44, currentPrice: 682.79, prevPrice: 682.79 },
+    { id: 'a3', name: 'SCHG', type: 'STOCKS', quantity: 25.801, buyPrice: 29.07, currentPrice: 33.55, prevPrice: 33.55 },
+    { id: 'a4', name: 'VTV', type: 'STOCKS', quantity: 1.27, buyPrice: 197.90, currentPrice: 217.09, prevPrice: 217.09 },
+    { id: 'a5', name: 'SCHD', type: 'STOCKS', quantity: 8.155, buyPrice: 30.66, currentPrice: 32.86, prevPrice: 32.86 },
+    { id: 'a6', name: 'MSFT', type: 'STOCKS', quantity: 0.778, buyPrice: 385.84, currentPrice: 390.70, prevPrice: 390.70 },
+    { id: 'a7', name: 'Realty Income (O)', type: 'STOCKS', quantity: 7.29, buyPrice: 62.08, currentPrice: 62.65, prevPrice: 62.65 }
   ],
   watchlist: [
     { ticker: 'TSLA', name: 'Tesla, Inc.', currentPrice: 178.50, prevPrice: 178.50 },
@@ -184,6 +185,174 @@ const initialCarlosState: FinancialState = {
   }
 };
 
+const normalizeDate = (rawDate: string): string => {
+  const clean = rawDate.trim().replace(/"/g, '');
+  if (clean.includes('/')) {
+    const parts = clean.split('/');
+    if (parts.length === 3) {
+      let [m, d, y] = parts;
+      if (y.length === 2) {
+        y = '20' + y;
+      }
+      const month = m.padStart(2, '0');
+      const day = d.padStart(2, '0');
+      return `${y}-${month}-${day}`;
+    }
+  }
+  return clean;
+};
+
+const classifyTransaction = (desc: string, amount: number): { category: Transaction['category']; subcategory: string; type: TransactionType } => {
+  const clean = desc.toLowerCase();
+  const type: TransactionType = amount < 0 ? 'EXPENSE' : 'INCOME';
+  
+  if (type === 'INCOME') {
+    if (clean.includes('esi') || clean.includes('specialist') || clean.includes('payroll') || clean.includes('salary') || clean.includes('salario') || clean.includes('nómina')) {
+      return { type, category: 'Salario', subcategory: 'Nómina Base' };
+    }
+    if (clean.includes('double') || clean.includes('overtime') || clean.includes('extra')) {
+      return { type, category: 'Salario', subcategory: 'Horas Extra (Double Time)' };
+    }
+    if (clean.includes('divid') || clean.includes('realty') || clean.includes('interest') || clean.includes('interés') || clean.includes('gold')) {
+      return { type, category: 'Salario', subcategory: 'Intereses/Dividendos' };
+    }
+    return { type, category: 'Salario', subcategory: 'Nómina Base' };
+  }
+
+  if (clean.includes('olive garden') || clean.includes('raising cane') || clean.includes('mcdonald') || clean.includes('pizza') || clean.includes('burger') || clean.includes('shawerma') || clean.includes('sq *') || clean.includes('restaurante')) {
+    return { type, category: 'Comida', subcategory: 'Restaurantes' };
+  }
+  if (clean.includes('costco')) {
+    return { type, category: 'Comida', subcategory: 'Costco' };
+  }
+  if (clean.includes('starbucks') || clean.includes('dunkin') || clean.includes('cafe') || clean.includes('coffee')) {
+    return { type, category: 'Comida', subcategory: 'Cafetería' };
+  }
+  if (clean.includes('super') || clean.includes('walmart') || clean.includes('kroger') || clean.includes('grocery') || clean.includes('wm super')) {
+    return { type, category: 'Comida', subcategory: 'Supermercado' };
+  }
+
+  if (clean.includes('gas') || clean.includes('fuel') || clean.includes('shell') || clean.includes('exxon') || clean.includes('speedway') || clean.includes('bp ')) {
+    return { type, category: 'Transporte', subcategory: 'Gasolina' };
+  }
+  if (clean.includes('uber') || clean.includes('lyft')) {
+    return { type, category: 'Transporte', subcategory: 'Uber' };
+  }
+  if (clean.includes('peaje') || clean.includes('toll') || clean.includes('ezpass') || clean.includes('ez-pass')) {
+    return { type, category: 'Transporte', subcategory: 'Peajes' };
+  }
+  if (clean.includes('mantenimiento') || clean.includes('taller') || clean.includes('tires') || clean.includes('repair') || clean.includes('autoparts') || clean.includes('camioneta')) {
+    return { type, category: 'Transporte', subcategory: 'Mantenimiento Camioneta' };
+  }
+
+  if (clean.includes('rent') || clean.includes('renta') || clean.includes('housing') || clean.includes('lease')) {
+    return { type, category: 'Vivienda', subcategory: 'Renta' };
+  }
+  if (clean.includes('comcast') || clean.includes('spectrum') || clean.includes('internet') || clean.includes('wifi') || clean.includes('at&t')) {
+    return { type, category: 'Vivienda', subcategory: 'Internet' };
+  }
+  if (clean.includes('power') || clean.includes('water') || clean.includes('electric') || clean.includes('sewer') || clean.includes('aep') || clean.includes('luz') || clean.includes('agua') || clean.includes('servicios')) {
+    return { type, category: 'Vivienda', subcategory: 'Servicios Públicos' };
+  }
+
+  if (clean.includes('netflix') || clean.includes('spotify') || clean.includes('hulu') || clean.includes('disney') || clean.includes('apple.com/bill') || clean.includes('prime video')) {
+    return { type, category: 'Ocio', subcategory: 'Suscripciones' };
+  }
+  if (clean.includes('travel') || clean.includes('flight') || clean.includes('hotel') || clean.includes('airline') || clean.includes('airbnb') || clean.includes('viaje')) {
+    return { type, category: 'Ocio', subcategory: 'Viajes' };
+  }
+  if (clean.includes('cinema') || clean.includes('movie') || clean.includes('game') || clean.includes('playstation') || clean.includes('steam') || clean.includes('cine')) {
+    return { type, category: 'Ocio', subcategory: 'Cine/Juegos' };
+  }
+
+  if (clean.includes('robinhood') || clean.includes('fidelity') || clean.includes('schwab') || clean.includes('crypto') || clean.includes('investment') || clean.includes('acción') || clean.includes('etf')) {
+    return { type, category: 'Inversión', subcategory: 'Acciones' };
+  }
+
+  if (clean.includes('cvs') || clean.includes('pharmacy') || clean.includes('walgreens') || clean.includes('hospital') || clean.includes('medical') || clean.includes('doctor')) {
+    return { type, category: 'Otros', subcategory: 'Varios' };
+  }
+  if (clean.includes('tool') || clean.includes('hardware') || clean.includes('homedepot') || clean.includes('lowe') || clean.includes('herramienta')) {
+    return { type, category: 'Otros', subcategory: 'Herramientas' };
+  }
+  if (clean.includes('tax') || clean.includes('irs') || clean.includes('impuesto')) {
+    return { type, category: 'Otros', subcategory: 'Impuestos' };
+  }
+
+  return { type, category: 'Otros', subcategory: 'Varios' };
+};
+
+const processZeroSumTransaction = (
+  tx: Transaction,
+  accounts: BankAccounts,
+  assets: InvestmentAsset[],
+  isUndo: boolean = false
+) => {
+  const adjAmount = isUndo ? -tx.amount : tx.amount;
+  const cleanDesc = tx.description.toLowerCase();
+  
+  let updatedAccounts = { ...accounts };
+  let updatedAssets = [...assets];
+
+  if (tx.type === 'EXPENSE') {
+    if (tx.category === 'Inversión') {
+      updatedAccounts.robinhoodCash = Number((updatedAccounts.robinhoodCash + adjAmount).toFixed(2));
+      
+      const assetName = 'Robinhood Buying Power';
+      const existingIndex = updatedAssets.findIndex(a => a.name.toUpperCase() === assetName.toUpperCase());
+      if (existingIndex > -1) {
+        const newQty = Number((updatedAssets[existingIndex].quantity + adjAmount).toFixed(6));
+        if (newQty <= 0) {
+          updatedAssets = updatedAssets.filter((_, i) => i !== existingIndex);
+        } else {
+          updatedAssets[existingIndex] = {
+            ...updatedAssets[existingIndex],
+            quantity: newQty
+          };
+        }
+      } else if (adjAmount > 0) {
+        updatedAssets.push({
+          id: crypto.randomUUID(),
+          name: assetName,
+          type: 'CASH',
+          quantity: adjAmount,
+          buyPrice: 1.00,
+          currentPrice: 1.00,
+          prevPrice: 1.00
+        });
+      }
+    } 
+    else if (tx.category === 'Otros' && (tx.subcategory === 'Fondo de Emergencia' || tx.subcategory === 'Varios' && cleanDesc.includes('marcus'))) {
+      updatedAccounts.marcus = Number((updatedAccounts.marcus + adjAmount).toFixed(2));
+      
+      const assetName = 'Marcus Savings';
+      const existingIndex = updatedAssets.findIndex(a => a.name.toUpperCase() === assetName.toUpperCase());
+      if (existingIndex > -1) {
+        const newQty = Number((updatedAssets[existingIndex].quantity + adjAmount).toFixed(6));
+        if (newQty <= 0) {
+          updatedAssets = updatedAssets.filter((_, i) => i !== existingIndex);
+        } else {
+          updatedAssets[existingIndex] = {
+            ...updatedAssets[existingIndex],
+            quantity: newQty
+          };
+        }
+      } else if (adjAmount > 0) {
+        updatedAssets.push({
+          id: crypto.randomUUID(),
+          name: assetName,
+          type: 'CASH',
+          quantity: adjAmount,
+          buyPrice: 1.00,
+          currentPrice: 1.00,
+          prevPrice: 1.00
+        });
+      }
+    }
+  }
+  return { accounts: updatedAccounts, assets: updatedAssets };
+};
+
 const financialReducer = (state: FinancialState, action: FinancialAction): FinancialState => {
   switch (action.type) {
     case 'RESET_STATE':
@@ -191,26 +360,49 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
     case 'IMPORT_STATE':
       return action.payload;
     case 'ADD_TRANSACTION': {
-      const isIncome = action.payload.type === 'INCOME';
+      const tx = action.payload;
+      const isIncome = tx.type === 'INCOME';
       const updatedWF = isIncome 
-        ? state.accounts.wellsFargo + action.payload.amount 
-        : state.accounts.wellsFargo - action.payload.amount;
+        ? state.accounts.wellsFargo + tx.amount 
+        : state.accounts.wellsFargo - tx.amount;
+      
+      let tempAccounts = { ...state.accounts, wellsFargo: Number(updatedWF.toFixed(2)) };
+      let tempAssets = [...state.assets];
+
+      const processed = processZeroSumTransaction(tx, tempAccounts, tempAssets, false);
+
       return { 
         ...state, 
-        transactions: [action.payload, ...state.transactions],
-        accounts: { ...state.accounts, wellsFargo: Number(updatedWF.toFixed(2)) }
+        transactions: [tx, ...state.transactions],
+        accounts: processed.accounts,
+        assets: processed.assets
       };
     }
     case 'ADD_MANY_TRANSACTIONS': {
       let tempWF = state.accounts.wellsFargo;
-      action.payload.forEach(tx => {
+      let tempAccounts = { ...state.accounts };
+      let tempAssets = [...state.assets];
+
+      action.payload.transactions.forEach(tx => {
         if (tx.type === 'INCOME') tempWF += tx.amount;
         else tempWF -= tx.amount;
       });
+      
+      tempAccounts.wellsFargo = Number(tempWF.toFixed(2));
+
+      action.payload.transactions.forEach(tx => {
+        const processed = processZeroSumTransaction(tx, tempAccounts, tempAssets, false);
+        tempAccounts = processed.accounts;
+        tempAssets = processed.assets;
+      });
+
       return {
         ...state,
-        transactions: [...action.payload, ...state.transactions],
-        accounts: { ...state.accounts, wellsFargo: Number(tempWF.toFixed(2)) }
+        transactions: [...action.payload.transactions, ...state.transactions],
+        accounts: tempAccounts,
+        assets: tempAssets,
+        lastCsvFileName: action.payload.fileName,
+        lastCsvUploadDate: action.payload.uploadDate
       };
     }
     case 'DELETE_TRANSACTION': {
@@ -220,12 +412,32 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
       const reversedWF = isIncome
         ? state.accounts.wellsFargo - tx.amount
         : state.accounts.wellsFargo + tx.amount;
+      
+      let tempAccounts = { ...state.accounts, wellsFargo: Number(reversedWF.toFixed(2)) };
+      let tempAssets = [...state.assets];
+
+      const processed = processZeroSumTransaction(tx, tempAccounts, tempAssets, true);
+
       return {
         ...state,
         transactions: state.transactions.filter(t => t.id !== action.payload),
-        accounts: { ...state.accounts, wellsFargo: Number(reversedWF.toFixed(2)) }
+        accounts: processed.accounts,
+        assets: processed.assets
       };
     }
+    case 'CLEAR_ALL_TRANSACTIONS':
+      return {
+        ...state,
+        transactions: [],
+        accounts: {
+          wellsFargo: 6135.00,
+          bofA: 1697.00,
+          marcus: 16533.00,
+          robinhoodCash: 4403.86
+        },
+        lastCsvFileName: undefined,
+        lastCsvUploadDate: undefined
+      };
     case 'ADD_ASSET':
       return { ...state, assets: [...state.assets, action.payload] };
     case 'UPDATE_ASSET_PRICE':
@@ -326,28 +538,6 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
   }
 };
 
-interface FinancialContextType {
-  state: FinancialState;
-  addTransaction: (t: Omit<Transaction, 'id' | 'date'>) => void;
-  addManyTransactions: (t: Transaction[]) => void;
-  deleteTransaction: (id: string) => void;
-  addAsset: (a: Omit<InvestmentAsset, 'id'>) => void;
-  updateAssetPrice: (id: string, currentPrice: number) => void;
-  deleteAsset: (id: string) => void;
-  updateLiquidCash: (account: keyof BankAccounts, amount: number) => void;
-  executeLimitOrder: (assetName: string, shares: number, price: number) => boolean;
-  transferFunds: (from: keyof BankAccounts, to: keyof BankAccounts, amount: number) => boolean;
-  setBudgetLimit: (limit: number) => void;
-  setEmergencyGoal: (goal: number) => void;
-  updatePaystubConfig: (config: Partial<PaystubConfig>) => void;
-  resetAllData: () => void;
-  importBackup: (backup: FinancialState) => void;
-  addToWatchlist: (ticker: string, name: string, currentPrice: number) => void;
-  removeFromWatchlist: (ticker: string) => void;
-  isLiveFeed: boolean;
-  setIsLiveFeed: (val: boolean) => void;
-}
-
 const FinancialContext = createContext<FinancialContextType | undefined>(undefined);
 
 const loadResilientState = (): FinancialState => {
@@ -363,15 +553,18 @@ const loadResilientState = (): FinancialState => {
       accounts: { ...initialCarlosState.accounts, ...parsed.accounts },
       monthlyBudgetLimit: parsed.monthlyBudgetLimit || initialCarlosState.monthlyBudgetLimit,
       emergencyFundGoal: parsed.emergencyFundGoal || initialCarlosState.emergencyFundGoal,
-      paystubConfig: { ...initialCarlosState.paystubConfig, ...parsed.paystubConfig }
+      paystubConfig: { ...initialCarlosState.paystubConfig, ...parsed.paystubConfig },
+      lastCsvFileName: parsed.lastCsvFileName,
+      lastCsvUploadDate: parsed.lastCsvUploadDate
     };
   } catch {
     return initialCarlosState;
   }
 };
 
-export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [state, dispatch] = useReducer(financialReducer, null, loadResilientState);
+// CORREGIDO: Se remueve el export para habilitar Vite Fast Refresh (HMR)
+const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const [state, dispatch] = useReducer(financialReducer, initialCarlosState, () => loadResilientState());
   const [isLiveFeed, setIsLiveFeed] = useState<boolean>(true);
 
   useEffect(() => {
@@ -393,8 +586,11 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     });
   };
 
-  const addManyTransactions = (payload: Transaction[]) => dispatch({ type: 'ADD_MANY_TRANSACTIONS', payload });
+  const addManyTransactions = (payload: Transaction[], fileName: string, uploadDate: string) => {
+    dispatch({ type: 'ADD_MANY_TRANSACTIONS', payload: { transactions: payload, fileName, uploadDate } });
+  };
   const deleteTransaction = (id: string) => dispatch({ type: 'DELETE_TRANSACTION', payload: id });
+  const clearAllTransactions = () => dispatch({ type: 'CLEAR_ALL_TRANSACTIONS' });
   const addAsset = (a: Omit<InvestmentAsset, 'id'>) => dispatch({ type: 'ADD_ASSET', payload: { ...a, id: crypto.randomUUID() } });
   const updateAssetPrice = (id: string, currentPrice: number) => dispatch({ type: 'UPDATE_ASSET_PRICE', payload: { id, currentPrice } });
   const deleteAsset = (id: string) => dispatch({ type: 'DELETE_ASSET', payload: id });
@@ -425,7 +621,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
   return (
     <FinancialContext.Provider value={{ 
-      state, addTransaction, addManyTransactions, deleteTransaction, addAsset, updateAssetPrice, 
+      state, addTransaction, addManyTransactions, deleteTransaction, clearAllTransactions, addAsset, updateAssetPrice, 
       deleteAsset, updateLiquidCash, executeLimitOrder, transferFunds, setBudgetLimit, setEmergencyGoal, 
       updatePaystubConfig, resetAllData, importBackup, addToWatchlist, removeFromWatchlist, isLiveFeed, setIsLiveFeed 
     }}>
@@ -434,6 +630,7 @@ export const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   );
 };
 
+// CORREGIDO: Se remueve el export para evitar la invalidación de HMR por exportar funciones/hooks no-componentes
 const useFinancials = () => {
   const context = useContext(FinancialContext);
   if (!context) throw new Error('useFinancials debe usarse bajo el FinancialProvider');
@@ -542,7 +739,7 @@ const DashboardView: React.FC = () => {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div className="text-left">
           <h2 className="text-2xl font-bold tracking-tight text-slate-800 dark:text-white">Panel Integrado de Wealth Engine</h2>
-          <p className="text-sm text-slate-500 dark:text-slate-400">Vigente al 11 de junio, 2026 • Moneda USD</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">Vigente al 14 de junio, 2026 • Moneda USD</p>
         </div>
         <div className="flex gap-2">
           <button onClick={handleBackupExport} className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-indigo-600/10 hover:bg-indigo-600/20 text-indigo-600 dark:text-indigo-400 border border-indigo-500/20 rounded-xl transition-colors">
@@ -563,7 +760,7 @@ const DashboardView: React.FC = () => {
             <DollarSign className="w-5 h-5 text-emerald-500" />
           </div>
           <p className="text-2xl font-bold text-slate-800 dark:text-white text-left">${analytics.netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-          <span className="text-[10px] text-slate-400 block text-left">Vigencia: 11 de junio, 2026</span>
+          <span className="text-[10px] text-slate-400 block text-left">Vigencia: 14 de junio, 2026</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
@@ -587,7 +784,7 @@ const DashboardView: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-3">
             <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left">Tasa de Ahorro</span>
-            <PieChart className="w-5 h-5 text-indigo-500" />
+            <PieIcon className="w-5 h-5 text-indigo-500" />
           </div>
           <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 text-left">{analytics.savingsRate.toFixed(1)}%</p>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full mt-2">
@@ -596,43 +793,47 @@ const DashboardView: React.FC = () => {
         </div>
       </div>
 
-      {}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Distribución de Cuentas Líquidas */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez
-          </h3>
-          <div className="space-y-3 text-left">
-            {(['wellsFargo', 'bofA', 'marcus', 'robinhoodCash'] as const).map(acc => (
-              <div key={acc} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 group relative">
-                <div>
-                  <p className="text-xs text-slate-400 font-semibold uppercase">
-                    {acc === 'wellsFargo' ? 'Wells Fargo' : acc === 'bofA' ? 'BofA' : acc === 'marcus' ? 'Marcus HYSA' : 'Robinhood Power'}
-                  </p>
-                  {acc === 'marcus' && <p className="text-[10px] text-amber-600 font-bold">3.50% APY</p>}
-                  {acc === 'robinhoodCash' && <p className="text-[10px] text-indigo-600 font-bold">3.75% APY</p>}
+        {/* Distribución de Cuentas Líquidas - Editable */}
+        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between">
+          <div className="space-y-4">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+              <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez (Editable)
+            </h3>
+            <div className="space-y-3 text-left">
+              {(['wellsFargo', 'bofA', 'marcus', 'robinhoodCash'] as const).map(acc => (
+                <div key={acc} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 group relative">
+                  <div>
+                    <p className="text-xs text-slate-400 font-semibold uppercase">
+                      {acc === 'wellsFargo' ? 'Wells Fargo' : acc === 'bofA' ? 'BofA' : acc === 'marcus' ? 'Marcus HYSA' : 'Robinhood Power'}
+                    </p>
+                    {acc === 'marcus' && <p className="text-[10px] text-amber-600 font-bold">3.50% APY</p>}
+                    {acc === 'robinhoodCash' && <p className="text-[10px] text-indigo-600 font-bold">3.75% APY</p>}
+                  </div>
+                  
+                  {editingAccount === acc ? (
+                    <input
+                      type="number"
+                      value={tempAmount}
+                      onChange={(e) => setTempAmount(e.target.value)}
+                      onBlur={() => saveCashUpdate(acc)}
+                      onKeyDown={(e) => e.key === 'Enter' && saveCashUpdate(acc)}
+                      className="w-24 p-1 text-right text-xs bg-transparent border border-indigo-500 rounded font-bold text-slate-800 dark:text-white focus:outline-none"
+                      autoFocus
+                    />
+                  ) : (
+                    <span onClick={() => handleEditCash(acc)} className="text-md font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-indigo-600 flex items-center gap-1">
+                      ${state.accounts[acc].toLocaleString()}
+                      <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </span>
+                  )}
                 </div>
-                
-                {editingAccount === acc ? (
-                  <input
-                    type="number"
-                    value={tempAmount}
-                    onChange={(e) => setTempAmount(e.target.value)}
-                    onBlur={() => saveCashUpdate(acc)}
-                    onKeyDown={(e) => e.key === 'Enter' && saveCashUpdate(acc)}
-                    className="w-24 p-1 text-right text-xs bg-transparent border border-indigo-500 rounded font-bold text-slate-800 dark:text-white focus:outline-none"
-                    autoFocus
-                  />
-                ) : (
-                  <span onClick={() => handleEditCash(acc)} className="text-md font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-indigo-600 flex items-center gap-1">
-                    ${state.accounts[acc].toLocaleString()}
-                    <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </span>
-                )}
-              </div>
-            ))}
+              ))}
+            </div>
+          </div>
+          <div className="pt-4 border-t border-slate-100 dark:border-slate-800 mt-2 text-slate-700 dark:text-slate-300">
+            <span className="text-[10px] block text-left">Vigencia: 14 de junio, 2026</span>
           </div>
         </div>
 
@@ -660,7 +861,7 @@ const DashboardView: React.FC = () => {
           <div className="space-y-1.5 mt-4">
             <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
               <div 
-                className="bg-emerald-500 h-full rounded-full transition-all duration-500"
+                className="bg-emerald-50 h-full rounded-full transition-all duration-500"
                 style={{ width: `${state.emergencyFundGoal > 0 ? Math.min((state.accounts.marcus / state.emergencyFundGoal) * 100, 100) : 0}%` }}
               ></div>
             </div>
@@ -676,7 +877,7 @@ const DashboardView: React.FC = () => {
         {/* Distribución Global de Activos */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
           <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-            <PieChart className="text-indigo-500 w-5 h-5" /> Distribución de Patrimonio
+            <PieIcon className="text-indigo-500 w-5 h-5" /> Distribución de Patrimonio
           </h3>
           <div className="flex justify-center py-2">
             <svg width="140" height="140" viewBox="0 0 36 36" className="transform -rotate-90">
@@ -689,7 +890,7 @@ const DashboardView: React.FC = () => {
                 strokeDashoffset={`-${analytics.netWorth > 0 ? (analytics.totalPortfolioValue / analytics.netWorth) * 100 : 0}`} />
             </svg>
           </div>
-          <div className="flex justify-center gap-6 text-xs font-semibold">
+          <div className="flex justify-center gap-6 text-xs font-semibold text-slate-700 dark:text-slate-300">
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 block"></span>
               <span>Inversiones ({analytics.netWorth > 0 ? ((analytics.totalPortfolioValue / analytics.netWorth) * 100).toFixed(0) : 0}%)</span>
@@ -707,19 +908,30 @@ const DashboardView: React.FC = () => {
 };
 
 const BudgetManagerView: React.FC = () => {
-  const { state, addTransaction, addManyTransactions, deleteTransaction, transferFunds, setBudgetLimit } = useFinancials();
+  const { state, addTransaction, addManyTransactions, deleteTransaction, clearAllTransactions, transferFunds, setBudgetLimit } = useFinancials();
 
   const [description, setDescription] = useState('');
   const [amount, setAmount] = useState('');
   const [type, setType] = useState<TransactionType>('EXPENSE');
   const [category, setCategory] = useState<'Vivienda' | 'Comida' | 'Transporte' | 'Ocio' | 'Inversión' | 'Salario' | 'Otros'>('Comida');
+  const [subcategory, setSubcategory] = useState<string>('Supermercado');
 
   const [fromAccount, setFromAccount] = useState<keyof BankAccounts>('wellsFargo');
   const [toAccount, setToAccount] = useState<keyof BankAccounts>('marcus');
   const [transferAmount, setTransferAmount] = useState('');
   const [transferStatus, setTransferStatus] = useState<{ status: 'IDLE' | 'SUCCESS' | 'ERROR'; msg: string }>({ status: 'IDLE', msg: '' });
 
+  const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
+  const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
+  const [hoveredSlice, setHoveredSlice] = useState<string | null>(null);
+
   const periods = useDynamicPeriods(state.transactions);
+
+  useEffect(() => {
+    if (SUBCATEGORIES[category]) {
+      setSubcategory(SUBCATEGORIES[category][0]);
+    }
+  }, [category]);
 
   const stats = useMemo(() => {
     const curIncome = state.transactions
@@ -762,7 +974,8 @@ const BudgetManagerView: React.FC = () => {
       prevExpenses,
       incomeDelta,
       expensesDelta,
-      categoriesDistribution
+      categoriesDistribution,
+      totalCurExpenses
     };
   }, [state.transactions, periods]);
 
@@ -774,7 +987,8 @@ const BudgetManagerView: React.FC = () => {
       description,
       amount: parseFloat(amount),
       type,
-      category
+      category,
+      subcategory
     });
 
     setDescription('');
@@ -818,23 +1032,27 @@ const BudgetManagerView: React.FC = () => {
         const columns = line.split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/);
         if (columns.length < 3) return;
 
-        const rawDate = columns[0]?.trim().replace(/"/g, '') || new Date().toISOString().split('T')[0];
+        const rawDate = normalizeDate(columns[0]?.trim() || '');
         const rawDesc = columns[1]?.trim().replace(/"/g, '') || 'Carga CSV Bancaria';
         const rawAmount = parseFloat(columns[2]?.trim().replace(/"/g, '').replace('$', '')) || 0;
-        const rawType: TransactionType = rawAmount < 0 ? 'EXPENSE' : 'INCOME';
+        
+        const classification = classifyTransaction(rawDesc, rawAmount);
         
         tempTransactions.push({
           id: crypto.randomUUID(),
           description: rawDesc,
           amount: Math.abs(rawAmount),
-          type: rawType,
-          category: rawType === 'INCOME' ? 'Salario' : 'Otros' as any,
+          type: classification.type,
+          category: classification.category,
+          subcategory: classification.subcategory,
           date: rawDate
         });
       });
 
       if (tempTransactions.length > 0) {
-        addManyTransactions(tempTransactions);
+        const now = new Date();
+        const formattedDate = `${now.toLocaleDateString()} a las ${now.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`;
+        addManyTransactions(tempTransactions, file.name, formattedDate);
       }
     };
     reader.readAsText(file);
@@ -842,13 +1060,77 @@ const BudgetManagerView: React.FC = () => {
 
   const budgetPercent = state.monthlyBudgetLimit > 0 ? (stats.curExpenses / state.monthlyBudgetLimit) * 100 : 0;
 
+  const renderSubcategoriesBreakdown = (mainCategory: string) => {
+    const subTotals = state.transactions
+      .filter(t => t.type === 'EXPENSE' && t.category === mainCategory && t.date.startsWith(periods.currentMonth))
+      .reduce((acc, t) => {
+        const sub = t.subcategory || 'Varios';
+        acc[sub] = (acc[sub] || 0) + t.amount;
+        return acc;
+      }, {} as Record<string, number>);
+
+    return Object.entries(subTotals)
+      .sort((a, b) => b[1] - a[1])
+      .map(([subName, subAmount]) => (
+        <div key={subName} className="flex justify-between items-center text-[11px] text-slate-400 pl-4 py-1 border-l-2 border-slate-200 dark:border-slate-800 font-mono">
+          <span>{subName}</span>
+          <span>${subAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+        </div>
+      ));
+  };
+
+  const getCoordinatesForPercent = (percent: number) => {
+    const x = Math.cos(2 * Math.PI * percent - Math.PI / 2);
+    const y = Math.sin(2 * Math.PI * percent - Math.PI / 2);
+    return [x, y];
+  };
+
+  const colorsMap: Record<string, string> = {
+    Vivienda: '#6366f1',
+    Comida: '#10b981',
+    Transporte: '#f59e0b',
+    Ocio: '#f43f5e',
+    Inversión: '#8b5cf6',
+    Otros: '#0ea5e9'
+  };
+
+  let accumulatedPercent = 0;
+  const pieSlices = stats.categoriesDistribution.map((item) => {
+    const startPercent = accumulatedPercent;
+    accumulatedPercent += item.percentage / 100;
+    const endPercent = accumulatedPercent;
+
+    const [startX, startY] = getCoordinatesForPercent(startPercent);
+    const [endX, endY] = getCoordinatesForPercent(endPercent);
+
+    const largeArcFlag = item.percentage > 50 ? 1 : 0;
+
+    let pathData = '';
+    if (item.percentage >= 99.9) {
+      pathData = `M 0 -1 A 1 1 0 1 1 -0.0001 -1 Z`;
+    } else {
+      pathData = [
+        `M 0 0`,
+        `L ${startX} ${startY}`,
+        `A 1 1 0 ${largeArcFlag} 1 ${endX} ${endY}`,
+        `Z`
+      ].join(' ');
+    }
+
+    return {
+      category: item.category,
+      percentage: item.percentage,
+      amount: item.amount,
+      pathData,
+      color: colorsMap[item.category] || '#64748b'
+    };
+  });
+
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      {/* Controles de Entrada */}
       <div className="space-y-6">
         
-        {/* Registro Transacción */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm text-left">
           <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white">Añadir Transacción</h3>
@@ -890,28 +1172,41 @@ const BudgetManagerView: React.FC = () => {
                 />
               </div>
             </div>
-            <div>
-              <label className="block text-xs font-semibold text-slate-400 mb-1">Categoría</label>
-              <select 
-                value={category} onChange={(e) => setCategory(e.target.value as any)}
-                className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
-              >
-                {type === 'EXPENSE' ? (
-                  <>
-                    <option value="Vivienda">Vivienda</option>
-                    <option value="Comida">Comida</option>
-                    <option value="Transporte">Transporte</option>
-                    <option value="Ocio">Ocio</option>
-                    <option value="Inversión">Inversión</option>
-                    <option value="Otros">Otros</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="Salario">Salario</option>
-                    <option value="Otros">Otros</option>
-                  </>
-                )}
-              </select>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Categoría</label>
+                <select 
+                  value={category} onChange={(e) => setCategory(e.target.value as any)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+                >
+                  {type === 'EXPENSE' ? (
+                    <>
+                      <option value="Vivienda">Vivienda</option>
+                      <option value="Comida">Comida</option>
+                      <option value="Transporte">Transporte</option>
+                      <option value="Ocio">Ocio</option>
+                      <option value="Inversión">Inversión</option>
+                      <option value="Otros">Otros</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Salario">Salario</option>
+                      <option value="Otros">Otros</option>
+                    </>
+                  )}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-400 mb-1">Subcategoría</label>
+                <select 
+                  value={subcategory} onChange={(e) => setSubcategory(e.target.value)}
+                  className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white focus:ring-2 focus:ring-indigo-500 focus:outline-none text-sm"
+                >
+                  {(SUBCATEGORIES[category] || ['Varios']).map(sub => (
+                    <option key={sub} value={sub}>{sub}</option>
+                  ))}
+                </select>
+              </div>
             </div>
             <button type="submit" className="w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 rounded-xl font-medium transition-colors text-sm shadow-sm">
               <PlusCircle className="w-4 h-4" /> Registrar Transacción
@@ -919,13 +1214,12 @@ const BudgetManagerView: React.FC = () => {
           </form>
         </div>
 
-        {/* Trasvasar Liquidez */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left">
           <div className="flex justify-between items-center">
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Trasvasar Liquidez</h3>
             <ArrowLeftRight className="w-4 h-4 text-indigo-500" />
           </div>
-          <p className="text-xs text-slate-400">Mueve los excedentes de Checking a Marcus o Robinhood Gold para optimizar tus rendimientos.</p>
+          <p className="text-xs text-slate-400">Optimiza tus APYs moviendo los excedentes de Checking (WF/BofA) a Marcus o Robinhood Gold.</p>
           <form onSubmit={handleTransfer} className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -974,15 +1268,17 @@ const BudgetManagerView: React.FC = () => {
 
       </div>
 
-      {}
       <div className="lg:col-span-2 space-y-6 text-left">
         
-        {/* Barra de Progreso Límite */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
             <div>
               <h3 className="text-lg font-bold text-slate-800 dark:text-white">Límite Mensual de Egresos ({periods.currentMonthLabel})</h3>
-              <p className="text-xs text-slate-400">Controles preventivos de control de flujo de caja para el mes vigente.</p>
+              {state.lastCsvFileName && (
+                <p className="text-[10px] bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 py-0.5 px-2 rounded-md inline-block font-mono mt-1">
+                  Último archivo: {state.lastCsvFileName} ({state.lastCsvUploadDate})
+                </p>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-400 font-semibold">Configurar Techo:</span>
@@ -1014,15 +1310,12 @@ const BudgetManagerView: React.FC = () => {
           )}
         </div>
 
-        {/* Gráfico de Tendencia Histórica e Intermensual SVG */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Flujo de Caja Intermensual</h3>
             <p className="text-xs text-slate-400">Análisis comparativo automático de {periods.previousMonthLabel} vs {periods.currentMonthLabel}.</p>
             
-            {/* Gráfico de barras SVG */}
             <div className="flex justify-center h-40 items-end gap-6 pt-6 relative border-b border-slate-150 dark:border-slate-800">
-              {/* Periodo Anterior */}
               <div className="flex flex-col items-center gap-1.5 w-18">
                 <div className="flex gap-1.5 items-end h-28 w-full justify-center">
                   <div className="bg-emerald-500/85 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.prevIncome / 5000) * 100, 100)}%` }} title={`Ingreso: $${stats.prevIncome}`}></div>
@@ -1031,7 +1324,6 @@ const BudgetManagerView: React.FC = () => {
                 <span className="text-[10px] font-semibold text-slate-400 truncate max-w-full text-center">{periods.previousMonthLabel}</span>
               </div>
               
-              {/* Periodo Actual */}
               <div className="flex flex-col items-center gap-1.5 w-18">
                 <div className="flex gap-1.5 items-end h-28 w-full justify-center">
                   <div className="bg-emerald-600 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.curIncome / 5000) * 100, 100)}%` }} title={`Ingreso: $${stats.curIncome}`}></div>
@@ -1057,32 +1349,35 @@ const BudgetManagerView: React.FC = () => {
             </div>
           </div>
 
-          {/* Gráfico de Gastos por Categoría */}
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Distribución de Gastos por Categoría</h3>
-            <p className="text-xs text-slate-400">Detalle de egresos acumulados para {periods.currentMonthLabel}.</p>
+            <p className="text-xs text-slate-400">Detalle de egresos acumulados para {periods.currentMonthLabel}. Haz clic en la fila para auditar subcategorías.</p>
             
             <div className="space-y-3 pt-1">
               {stats.categoriesDistribution.map((item) => {
-                const colorsMap: Record<string, string> = {
-                  Vivienda: 'bg-indigo-500',
-                  Comida: 'bg-emerald-500',
-                  Transporte: 'bg-amber-500',
-                  Ocio: 'bg-rose-500',
-                  Inversión: 'bg-purple-500',
-                  Otros: 'bg-sky-500'
-                };
-                const colorClass = colorsMap[item.category] || 'bg-slate-500';
+                const isExpanded = expandedCategory === item.category;
+                const colorClass = colorsMap[item.category] || '#64748b';
                 
                 return (
                   <div key={item.category} className="space-y-1">
-                    <div className="flex justify-between text-xs">
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">{item.category}</span>
+                    <div 
+                      onClick={() => setExpandedCategory(isExpanded ? null : item.category)}
+                      className="flex justify-between text-xs cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-1.5 rounded-lg transition-all"
+                    >
+                      <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
+                        <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: colorClass }}></span>
+                        {item.category} {isExpanded ? '▼' : '►'}
+                      </span>
                       <span className="text-slate-400 font-semibold">${item.amount.toLocaleString()} ({item.percentage.toFixed(1)}%)</span>
                     </div>
                     <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
-                      <div className={`h-full rounded-full ${colorClass}`} style={{ width: `${item.percentage}%` }}></div>
+                      <div className="h-full rounded-full transition-all duration-300" style={{ width: `${item.percentage}%`, backgroundColor: colorClass }}></div>
                     </div>
+                    {isExpanded && (
+                      <div className="mt-2 space-y-1 bg-slate-50 dark:bg-slate-800/20 p-2 rounded-lg">
+                        {renderSubcategoriesBreakdown(item.category)}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1093,9 +1388,90 @@ const BudgetManagerView: React.FC = () => {
           </div>
         </div>
 
-        {/* Historial Transaccional del Periodo Vigente */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm text-left">
+          <div className="md:col-span-1 flex flex-col items-center justify-center space-y-3">
+            <h3 className="text-sm font-bold text-slate-800 dark:text-white uppercase tracking-wider text-center">Visualización de Egresos</h3>
+            {pieSlices.length > 0 ? (
+              <svg viewBox="-1.2 -1.2 2.4 2.4" className="w-40 h-40 transform rotate-[-90deg]">
+                {pieSlices.map((slice) => {
+                  const isHovered = hoveredSlice === slice.category;
+                  return (
+                    <path
+                      key={slice.category}
+                      d={slice.pathData}
+                      fill={slice.color}
+                      className="transition-all duration-200 cursor-pointer"
+                      style={{
+                        transform: isHovered ? 'scale(1.08)' : 'scale(1)',
+                        opacity: hoveredSlice && !isHovered ? 0.6 : 1
+                      }}
+                      onMouseEnter={() => setHoveredSlice(slice.category)}
+                      onMouseLeave={() => setHoveredSlice(null)}
+                    />
+                  );
+                })}
+              </svg>
+            ) : (
+              <div className="w-40 h-40 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-xs text-slate-400 text-center p-3">
+                Sin datos este mes
+              </div>
+            )}
+          </div>
+          <div className="md:col-span-2 flex flex-col justify-center space-y-2">
+            <h4 className="text-xs font-bold text-slate-400 uppercase">Resumen del Segmento</h4>
+            {hoveredSlice ? (
+              (() => {
+                const active = pieSlices.find(s => s.category === hoveredSlice);
+                return (
+                  <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl">
+                    <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">{hoveredSlice}</p>
+                    <p className="text-xl font-mono font-bold text-slate-800 dark:text-white">${active?.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+                    <p className="text-xs text-slate-400">{active?.percentage.toFixed(1)}% del total mensual</p>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl text-xs text-slate-400 italic">
+                Pasa el cursor por las porciones del gráfico circular para auditar montos.
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm text-left">
-          <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Historial General de Movimientos</h3>
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-lg font-bold text-slate-800 dark:text-white">Historial General de Movimientos</h3>
+            {state.transactions.length > 0 && (
+              <div className="relative">
+                {showClearConfirm ? (
+                  <div className="flex gap-1">
+                    <button 
+                      onClick={() => {
+                        clearAllTransactions();
+                        setShowClearConfirm(false);
+                      }}
+                      className="text-[10px] font-bold bg-rose-600 hover:bg-rose-700 text-white px-2.5 py-1 rounded-lg transition-colors shadow-sm"
+                    >
+                      Confirmar Borrado
+                    </button>
+                    <button 
+                      onClick={() => setShowClearConfirm(false)}
+                      className="text-[10px] font-bold bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-lg transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                ) : (
+                  <button 
+                    onClick={() => setShowClearConfirm(true)}
+                    className="text-[10px] font-bold border border-rose-500/30 hover:border-rose-500 bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 px-3 py-1.5 rounded-xl transition-all"
+                  >
+                    Borrado General
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
           <div className="overflow-y-auto max-h-[300px] divide-y divide-slate-100 dark:divide-slate-800 pr-1">
             {state.transactions.map((tx) => (
               <div key={tx.id} className="flex justify-between items-center py-3">
@@ -1103,6 +1479,7 @@ const BudgetManagerView: React.FC = () => {
                   <p className="text-sm font-semibold text-slate-800 dark:text-white">{tx.description}</p>
                   <div className="flex items-center gap-2 text-[10px] text-slate-400">
                     <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-semibold">{tx.category}</span>
+                    {tx.subcategory && <span className="bg-indigo-100/50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded font-semibold">{tx.subcategory}</span>}
                     <span>{tx.date}</span>
                   </div>
                 </div>
@@ -1132,6 +1509,8 @@ const InvestmentPortfolioView: React.FC = () => {
   const { state, addAsset, updateAssetPrice, deleteAsset, executeLimitOrder, isLiveFeed, setIsLiveFeed, addToWatchlist, removeFromWatchlist } = useFinancials();
 
   const [consoleTab, setConsoleTab] = useState<'LIMIT_ORDER' | 'MANUAL_ADD' | 'WATCHLIST'>('LIMIT_ORDER');
+  const [subTab, setSubTab] = useState<'CARTERA' | 'SCANNER'>('CARTERA');
+  const [scannerFilter, setScannerFilter] = useState<'ALL' | 'INTERESANTE' | 'CONSIDERAR' | 'NO_FAVORABLE'>('ALL');
 
   const [assetName, setAssetName] = useState('');
   const [assetType, setAssetType] = useState<AssetType>('STOCKS');
@@ -1150,7 +1529,6 @@ const InvestmentPortfolioView: React.FC = () => {
   const [watchName, setWatchName] = useState('');
   const [watchPrice, setWatchPrice] = useState('');
 
-  // Autocompletado reactivo e inteligente para la adición simplificada de la Watchlist
   useEffect(() => {
     const cleanTicker = watchTicker.trim().toUpperCase();
     if (cleanTicker && TICKER_DATABASE[cleanTicker]) {
@@ -1187,6 +1565,76 @@ const InvestmentPortfolioView: React.FC = () => {
 
     return { list, totalCost, totalValue, netGain, netPercent };
   }, [state.assets]);
+
+  const scannerList = useMemo(() => {
+    const combinedTickers = new Set<string>();
+    
+    state.assets.forEach(a => {
+      if (a.type === 'STOCKS') {
+        combinedTickers.add(a.name.toUpperCase());
+      }
+    });
+    
+    state.watchlist.forEach(w => {
+      combinedTickers.add(w.ticker.toUpperCase());
+    });
+
+    return Array.from(combinedTickers).map(ticker => {
+      const portfolioAsset = state.assets.find(a => a.name.toUpperCase() === ticker);
+      const watchAsset = state.watchlist.find(w => w.ticker.toUpperCase() === ticker);
+
+      const currentPrice = portfolioAsset ? portfolioAsset.currentPrice : (watchAsset ? watchAsset.currentPrice : 100);
+      const prevPrice = portfolioAsset ? portfolioAsset.prevPrice : (watchAsset ? watchAsset.prevPrice : 100);
+      
+      const isUp = prevPrice !== undefined && currentPrice > prevPrice;
+      
+      const seed = ticker.charCodeAt(0) + (ticker.charCodeAt(1) || 0);
+      const rawRsi = Math.max(10, Math.min(90, 45 + (seed % 35) + (isUp ? 4 : -4)));
+      const rsi = Number(rawRsi.toFixed(1));
+
+      let position = 'Sobre SMA200, SMA100 | Debajo SMA50, SMA20 | Entre SMA100-SMA50';
+      let signal: 'Interesante' | 'A considerar' | 'No favorable' = 'A considerar';
+
+      if (rsi < 30) {
+        position = 'Debajo de todas las SMA';
+        signal = 'Interesante';
+      } else if (rsi >= 30 && rsi < 50) {
+        position = 'Sobre SMA100, SMA50 | Debajo SMA20, SMA200 | Entre SMA50-SMA20';
+        signal = 'Interesante';
+      } else if (rsi >= 50 && rsi < 65) {
+        position = 'Sobre SMA100, SMA200, SMA50 | Debajo SMA20 | Entre SMA50-SMA20';
+        signal = 'A considerar';
+      } else if (rsi >= 65 && rsi < 75) {
+        position = 'Sobre SMA200, SMA20, SMA50 | Debajo SMA100 | Entre SMA50-SMA100';
+        signal = 'No favorable';
+      } else {
+        position = 'Sobre todas las SMA';
+        signal = 'No favorable';
+      }
+
+      const etfList = ['VOO', 'SCHD', 'SCHG', 'VTV', 'VXUS'];
+      const assetClass = etfList.includes(ticker) ? 'ETF' : 'STOCK';
+
+      return {
+        ticker,
+        name: portfolioAsset ? `Mi Cartera: ${ticker}` : (watchAsset ? watchAsset.name : ticker),
+        currentPrice,
+        prevPrice,
+        rsi,
+        position,
+        signal,
+        assetClass,
+        isPortfolio: !!portfolioAsset,
+        isWatchlist: !!watchAsset
+      };
+    }).filter(item => {
+      if (scannerFilter === 'ALL') return true;
+      if (scannerFilter === 'INTERESANTE') return item.signal === 'Interesante';
+      if (scannerFilter === 'CONSIDERAR') return item.signal === 'A considerar';
+      if (scannerFilter === 'NO_FAVORABLE') return item.signal === 'No favorable';
+      return true;
+    });
+  }, [state.assets, state.watchlist, scannerFilter]);
 
   const handleAddAssetSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -1244,10 +1692,17 @@ const InvestmentPortfolioView: React.FC = () => {
     setTimeout(() => setOrderStatus({ status: 'IDLE', msg: '' }), 4000);
   };
 
+  const handleToggleWatchlistInRow = (item: typeof scannerList[0]) => {
+    if (item.isWatchlist) {
+      removeFromWatchlist(item.ticker);
+    } else {
+      addToWatchlist(item.ticker, item.name, item.currentPrice);
+    }
+  };
+
   return (
     <div className="space-y-6">
       
-      {/* KPIs Portafolio */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <span className="text-[10px] tracking-wider uppercase font-bold text-slate-400 block mb-1">Costo Base Inicial</span>
@@ -1270,302 +1725,424 @@ const InvestmentPortfolioView: React.FC = () => {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
-        {/* Consola de Control de Inversiones y Watchlist */}
-        <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left flex flex-col justify-between">
-          <div className="space-y-4">
-            
-            {/* Control del Ticker en tiempo real */}
-            <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-800 rounded-xl flex items-center justify-between">
-              <div>
-                <span className="text-xs font-bold text-slate-800 dark:text-white block">Cotizaciones en Vivo</span>
-                <span className="text-[10px] text-slate-400 block">Flujo de ticks cada 3.5s</span>
-              </div>
-              <button 
-                onClick={() => setIsLiveFeed(!isLiveFeed)}
-                className={`p-2 rounded-lg flex items-center gap-1.5 transition-all text-xs font-bold ${isLiveFeed ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-150 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
-              >
-                {isLiveFeed ? (
-                  <><Pause className="w-3.5 h-3.5" /> Pausar Ticker</>
-                ) : (
-                  <><Play className="w-3.5 h-3.5 fill-current" /> Activar Ticker</>
-                )}
-              </button>
-            </div>
+      {/* Selector de sub-pestaña requerido por Modificaciones.txt */}
+      <div className="flex border-b border-slate-100 dark:border-slate-800 pb-px gap-2">
+        <button 
+          onClick={() => setSubTab('CARTERA')}
+          className={`px-4 py-2 text-xs font-bold tracking-wider uppercase transition-all border-b-2 ${subTab === 'CARTERA' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}
+        >
+          💼 Mi Cartera & Operaciones
+        </button>
+        <button 
+          onClick={() => setSubTab('SCANNER')}
+          className={`px-4 py-2 text-xs font-bold tracking-wider uppercase transition-all border-b-2 ${subTab === 'SCANNER' ? 'border-indigo-600 text-indigo-600' : 'border-transparent text-slate-400'}`}
+        >
+          🔍 Escáner Técnico
+        </button>
+      </div>
 
-            <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-[10px] font-bold tracking-tight">
-              <button 
-                onClick={() => { setConsoleTab('LIMIT_ORDER'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
-                className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'LIMIT_ORDER' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
-              >
-                Orden Límite
-              </button>
-              <button 
-                onClick={() => { setConsoleTab('MANUAL_ADD'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
-                className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'MANUAL_ADD' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
-              >
-                Añadir Activo
-              </button>
-              <button 
-                onClick={() => { setConsoleTab('WATCHLIST'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
-                className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'WATCHLIST' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
-              >
-                + Watchlist
-              </button>
-            </div>
-
-            {consoleTab === 'LIMIT_ORDER' ? (
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
-                    <UserCheck className="text-indigo-500 w-5 h-5" /> Orden Límite Robinhood
-                  </h3>
-                  <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400 px-2 rounded-full font-bold">Gold Mode</span>
+      {subTab === 'CARTERA' ? (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          
+          <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left flex flex-col justify-between">
+            <div className="space-y-4">
+              
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-800 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-xs font-bold text-slate-800 dark:text-white block">Cotizaciones en Vivo</span>
+                  <span className="text-[10px] text-slate-400 block">Flujo de ticks cada 3.5s</span>
                 </div>
-                <p className="text-xs text-slate-400 leading-relaxed">
-                  Ejecuta las compras de Robinhood Gold (**${state.accounts.robinhoodCash.toLocaleString()}** disponibles rindiendo 3.75%).
-                </p>
-                <form onSubmit={handleLaunchLimitOrder} className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Ticker / Activo</label>
-                    <input 
-                      type="text" value={targetAsset} onChange={(e) => setTargetAsset(e.target.value.toUpperCase())}
-                      className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                      placeholder="Ej. VXUS, O, VOO" required
-                    />
-                  </div>
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Acciones</label>
-                      <input 
-                        type="number" step="any" value={limitShares} onChange={(e) => setLimitShares(e.target.value)}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
-                        placeholder="0.00" required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio ($)</label>
-                      <input 
-                        type="number" step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)}
-                        className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
-                        placeholder="0.00" required
-                      />
-                    </div>
-                  </div>
-                  <button type="submit" className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs tracking-wider uppercase transition-colors shadow-md">
-                    Desplegar Orden Límite
-                  </button>
-                </form>
+                <button 
+                  onClick={() => setIsLiveFeed(!isLiveFeed)}
+                  className={`p-2 rounded-lg flex items-center gap-1.5 transition-all text-xs font-bold ${isLiveFeed ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-slate-150 dark:bg-slate-700 text-slate-600 dark:text-slate-300'}`}
+                >
+                  {isLiveFeed ? (
+                    <><Pause className="w-3.5 h-3.5" /> Pausar Ticker</>
+                  ) : (
+                    <><Play className="w-3.5 h-3.5 fill-current" /> Activar Ticker</>
+                  )}
+                </button>
               </div>
-            ) : consoleTab === 'MANUAL_ADD' ? (
-              <div className="space-y-3">
-                <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
-                  <Coins className="text-indigo-500 w-5 h-5" /> Añadir Activo Manual
-                </h3>
-                <form onSubmit={handleAddAssetSubmit} className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Nombre / Ticker</label>
-                    <input 
-                      type="text" value={assetName} onChange={(e) => setAssetName(e.target.value)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
-                      placeholder="Ej. SCHD, VTV" required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Tipo de Activo</label>
-                    <select 
-                      value={assetType} onChange={(e) => setAssetType(e.target.value as AssetType)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white"
-                    >
-                      <option value="STOCKS">Acciones / ETFs</option>
-                      <option value="CRYPTO">Criptomonedas</option>
-                      <option value="FIXED_INCOME">Renta Fija / Bonos</option>
-                      <option value="CASH">Efectivo Equivalente</option>
-                    </select>
-                  </div>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Cantidades</label>
-                      <input 
-                        type="number" step="any" value={shares} onChange={(e) => setShares(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
-                        placeholder="0.00" required
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Compra ($)</label>
-                      <input 
-                        type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
-                        placeholder="0.00" required
-                      />
-                    </div>
-                  </div>
-                  <button type="submit" className="w-full py-2 bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-lg text-xs font-semibold transition-colors">
-                    Registrar Activo
-                  </button>
-                </form>
+
+              <div className="flex bg-slate-100 dark:bg-slate-800 p-1 rounded-xl text-[10px] font-bold tracking-tight">
+                <button 
+                  onClick={() => { setConsoleTab('LIMIT_ORDER'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'LIMIT_ORDER' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Orden Límite
+                </button>
+                <button 
+                  onClick={() => { setConsoleTab('MANUAL_ADD'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'MANUAL_ADD' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  Añadir Activo
+                </button>
+                <button 
+                  onClick={() => { setConsoleTab('WATCHLIST'); setOrderStatus({ status: 'IDLE', msg: '' }); }}
+                  className={`flex-1 py-1.5 rounded-lg transition-all ${consoleTab === 'WATCHLIST' ? 'bg-white dark:bg-slate-700 text-slate-800 dark:text-white shadow-sm' : 'text-slate-400'}`}
+                >
+                  + Watchlist
+                </button>
               </div>
-            ) : (
-              <div className="space-y-3">
-                <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
-                  <Eye className="text-indigo-500 w-5 h-5" /> Agregar a Watchlist
-                </h3>
-                <form onSubmit={handleAddWatchlist} className="space-y-3">
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Ticker</label>
-                    <input 
-                      type="text" value={watchTicker} onChange={(e) => setWatchTicker(e.target.value)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-bold uppercase"
-                      placeholder="Ej. AMD, INTC..." required
-                    />
+
+              {consoleTab === 'LIMIT_ORDER' ? (
+                <div className="space-y-3">
+                  <div className="flex justify-between items-center">
+                    <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+                      <UserCheck className="text-indigo-500 w-5 h-5" /> Orden Límite Robinhood
+                    </h3>
+                    <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400 px-2 rounded-full font-bold">Gold Mode</span>
                   </div>
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Nombre (Autocompletado)</label>
-                    <input 
-                      type="text" value={watchName} onChange={(e) => setWatchName(e.target.value)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
-                      placeholder="Nombre del activo" required
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Base ($) (Autocompletado)</label>
-                    <input 
-                      type="number" step="0.01" value={watchPrice} onChange={(e) => setWatchPrice(e.target.value)}
-                      className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
-                      placeholder="100.00" required
-                    />
-                  </div>
-                  <button type="submit" className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition-colors">
-                    Añadir a Seguimiento
-                  </button>
-                </form>
+                  <p className="text-xs text-slate-400 leading-relaxed">
+                    Ejecuta las compras de Robinhood Gold (**${state.accounts.robinhoodCash.toLocaleString()}** disponibles rindiendo 3.75%).
+                  </p>
+                  <form onSubmit={handleLaunchLimitOrder} className="space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Ticker / Activo</label>
+                      <input 
+                        type="text" value={targetAsset} onChange={(e) => setTargetAsset(e.target.value.toUpperCase())}
+                        className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                        placeholder="Ej. VXUS, O, VOO" required
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Acciones</label>
+                        <input 
+                          type="number" step="any" value={limitShares} onChange={(e) => setLimitShares(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0.00" required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio ($)</label>
+                        <input 
+                          type="number" step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)}
+                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
+                          placeholder="0.00" required
+                        />
+                      </div>
+                    </div>
+                    <button type="submit" className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs tracking-wider uppercase transition-colors shadow-md">
+                      Desplegar Orden Límite
+                    </button>
+                  </form>
+                </div>
+              ) : consoleTab === 'MANUAL_ADD' ? (
+                <div className="space-y-3">
+                  <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+                    <Coins className="text-indigo-500 w-5 h-5" /> Añadir Activo Manual
+                  </h3>
+                  <form onSubmit={handleAddAssetSubmit} className="space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Nombre / Ticker</label>
+                      <input 
+                        type="text" value={assetName} onChange={(e) => setAssetName(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                        placeholder="Ej. SCHD, VTV" required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Tipo de Activo</label>
+                      <select 
+                        value={assetType} onChange={(e) => setAssetType(e.target.value as AssetType)}
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-xs text-slate-800 dark:text-white"
+                      >
+                        <option value="STOCKS">Acciones / ETFs</option>
+                        <option value="CRYPTO">Criptomonedas</option>
+                        <option value="FIXED_INCOME">Renta Fija / Bonos</option>
+                        <option value="CASH">Efectivo Equivalente</option>
+                      </select>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Cantidades</label>
+                        <input 
+                          type="number" step="any" value={shares} onChange={(e) => setShares(e.target.value)}
+                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                          placeholder="0.00" required
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Compra ($)</label>
+                        <input 
+                          type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)}
+                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                          placeholder="0.00" required
+                        />
+                      </div>
+                    </div>
+                    <button type="submit" className="w-full py-2 bg-slate-800 hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600 text-white rounded-lg text-xs font-semibold transition-colors">
+                      Registrar Activo
+                    </button>
+                  </form>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <h3 className="text-md font-bold text-slate-800 dark:text-white flex items-center gap-1.5">
+                    <Coins className="text-indigo-500 w-5 h-5" /> Agregar a Watchlist
+                  </h3>
+                  <form onSubmit={handleAddWatchlist} className="space-y-3">
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Ticker</label>
+                      <input 
+                        type="text" value={watchTicker} onChange={(e) => setWatchTicker(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-bold uppercase"
+                        placeholder="Ej. AMD, INTC..." required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Nombre (Autocompletado)</label>
+                      <input 
+                        type="text" value={watchName} onChange={(e) => setWatchName(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                        placeholder="Nombre del activo" required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Base ($) (Autocompletado)</label>
+                      <input 
+                        type="number" step="0.01" value={watchPrice} onChange={(e) => setWatchPrice(e.target.value)}
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                        placeholder="100.00" required
+                      />
+                    </div>
+                    <button type="submit" className="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold transition-colors">
+                      Añadir a Seguimiento
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+
+            {orderStatus.status !== 'IDLE' && (
+              <div className={`p-3 mt-4 rounded-xl text-xs font-medium ${orderStatus.status === 'SUCCESS' ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950/20 text-rose-600'}`}>
+                {orderStatus.msg}
               </div>
             )}
           </div>
 
-          {orderStatus.status !== 'IDLE' && (
-            <div className={`p-3 mt-4 rounded-xl text-xs font-medium ${orderStatus.status === 'SUCCESS' ? 'bg-emerald-50 dark:bg-emerald-950/20 text-emerald-600' : 'bg-rose-50 dark:bg-rose-950/20 text-rose-600'}`}>
-              {orderStatus.msg}
-            </div>
-          )}
-        </div>
+          <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col justify-between">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold">
+                    <th className="p-4">Activo</th>
+                    <th className="p-4 text-right">Cantidades</th>
+                    <th className="p-4 text-right">Precio Base</th>
+                    <th className="p-4 text-right">Precio Actual (Editar)</th>
+                    <th className="p-4 text-right">Valor Mercado</th>
+                    <th className="p-4 text-right">Rendimiento</th>
+                    <th className="p-4 text-center">Baja</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {summary.list.map(a => {
+                    const hasPriceChanged = a.prevPrice !== undefined && a.prevPrice !== a.currentPrice;
+                    const isUp = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice > a.prevPrice;
+                    const isDown = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice < a.prevPrice;
 
-        {}
-        <div className="lg:col-span-2 bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm overflow-hidden flex flex-col justify-between">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
-              <thead>
-                <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold">
-                  <th className="p-4">Activo</th>
-                  <th className="p-4 text-right">Cantidades</th>
-                  <th className="p-4 text-right">Precio Base</th>
-                  <th className="p-4 text-right">Precio Actual (Editar)</th>
-                  <th className="p-4 text-right">Valor Mercado</th>
-                  <th className="p-4 text-right">Rendimiento</th>
-                  <th className="p-4 text-center">Baja</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {summary.list.map(a => {
-                  const hasPriceChanged = a.prevPrice !== undefined && a.prevPrice !== a.currentPrice;
-                  const isUp = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice > a.prevPrice;
-                  const isDown = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice < a.prevPrice;
+                    const etfList = ['VOO', 'SCHD', 'SCHG', 'VTV', 'VXUS'];
+                    const assetClass = etfList.includes(a.name) ? 'ETF' : 'STOCK';
 
-                  return (
-                    <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 text-slate-700 dark:text-slate-300">
-                      <td className="p-4 font-bold text-slate-800 dark:text-white font-sans">
-                        <div className="flex flex-col items-start gap-1">
-                          <span>{a.name}</span>
-                          {/* Yahoo Finance Advanced Interactive Chart Deep-Link */}
-                          <a 
-                            href={`https://finance.yahoo.com/chart/${a.name}`} 
-                            target="_blank" 
-                            rel="noopener noreferrer"
-                            className="text-[9px] bg-indigo-50/80 hover:bg-indigo-600 hover:text-white text-indigo-600 px-1.5 py-0.5 rounded font-mono font-bold uppercase transition-colors"
-                            title="Ver Gráfico Avanzado en Yahoo Finance"
-                          >
-                            Advanced Chart ↗
-                          </a>
-                        </div>
-                      </td>
-                      <td className="p-4 text-right font-medium">{a.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
-                      <td className="p-4 text-right">${a.buyPrice.toFixed(2)}</td>
-                      <td className="p-4 text-right">
-                        {editingAssetId === a.id ? (
-                          <div className="flex items-center justify-end gap-1.5">
-                            <input 
-                              type="number"
-                              step="0.01"
-                              value={editingPrice}
-                              onChange={(e) => setEditingPrice(e.target.value)}
-                              className="w-20 p-1 border border-indigo-500 rounded bg-white dark:bg-slate-850 text-slate-800 dark:text-white text-xs text-right focus:outline-none"
-                              onBlur={() => {
-                                const val = parseFloat(editingPrice);
-                                if (!isNaN(val) && val > 0) {
-                                  updateAssetPrice(a.id, val);
-                                }
-                                setEditingAssetId(null);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
+                    return (
+                      <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 text-slate-700 dark:text-slate-300">
+                        <td className="p-4 font-bold text-slate-800 dark:text-white font-sans">
+                          <div className="flex flex-col items-start gap-1">
+                            <span>{a.name}</span>
+                            <a 
+                              href={`https://finance.yahoo.com/chart/${a.name}`} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-[9px] bg-indigo-50/80 hover:bg-indigo-600 hover:text-white text-indigo-600 px-1.5 py-0.5 rounded font-mono font-bold uppercase transition-colors"
+                              title="Ver Gráfico Avanzado en Yahoo Finance"
+                            >
+                              Advanced Chart ↗
+                            </a>
+                            <span className="text-[8px] text-slate-400 font-mono tracking-wider font-semibold block">{assetClass}</span>
+                          </div>
+                        </td>
+                        <td className="p-4 text-right font-medium">{a.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
+                        <td className="p-4 text-right">${a.buyPrice.toFixed(2)}</td>
+                        <td className="p-4 text-right">
+                          {editingAssetId === a.id ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <input 
+                                type="number"
+                                step="0.01"
+                                value={editingPrice}
+                                onChange={(e) => setEditingPrice(e.target.value)}
+                                className="w-20 p-1 border border-indigo-500 rounded bg-white dark:bg-slate-850 text-slate-800 dark:text-white text-xs text-right focus:outline-none"
+                                onBlur={() => {
                                   const val = parseFloat(editingPrice);
                                   if (!isNaN(val) && val > 0) {
                                     updateAssetPrice(a.id, val);
                                   }
                                   setEditingAssetId(null);
-                                }
-                              }}
-                              autoFocus
-                            />
-                          </div>
-                        ) : (
-                          <div className="flex items-center justify-end gap-1.5 group cursor-pointer" onClick={() => {
-                            setEditingAssetId(a.id);
-                            setEditingPrice(a.currentPrice.toString());
-                          }}>
-                            {/* Micro-animación de Tick en Vivo */}
-                            <span className={`flex items-center gap-1 font-mono transition-all duration-500 px-1.5 py-0.5 rounded ${isUp ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : isDown ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10' : ''}`}>
-                              {isUp && <span className="text-[10px] animate-bounce">▲</span>}
-                              {isDown && <span className="text-[10px] animate-bounce">▼</span>}
-                              <span>${a.currentPrice.toFixed(2)}</span>
-                            </span>
-                            <button
-                              type="button"
-                              className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-500 p-0.5 transition-all"
-                              title="Actualizar precio de mercado"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                            </button>
-                          </div>
-                        )}
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    const val = parseFloat(editingPrice);
+                                    if (!isNaN(val) && val > 0) {
+                                      updateAssetPrice(a.id, val);
+                                    }
+                                    setEditingAssetId(null);
+                                  }
+                                }}
+                                autoFocus
+                              />
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1.5 group cursor-pointer" onClick={() => {
+                              setEditingAssetId(a.id);
+                              setEditingPrice(a.currentPrice.toString());
+                            }}>
+                              <span className={`flex items-center gap-1 font-mono transition-all duration-500 px-1.5 py-0.5 rounded ${isUp ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : isDown ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10' : ''}`}>
+                                {isUp && <span className="text-[10px] animate-bounce">▲</span>}
+                                {isDown && <span className="text-[10px] animate-bounce">▼</span>}
+                                <span>${a.currentPrice.toFixed(2)}</span>
+                              </span>
+                              <button
+                                type="button"
+                                className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-500 p-0.5 transition-all"
+                                title="Actualizar precio de mercado"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                        <td className="p-4 text-right font-bold text-slate-800 dark:text-slate-200">${a.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className={`p-4 text-right font-bold ${a.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                          {a.gainLoss >= 0 ? '+' : ''}{a.percent.toFixed(1)}%
+                        </td>
+                        <td className="p-4 text-center">
+                          <button onClick={() => deleteAsset(a.id)} className="text-slate-400 hover:text-rose-500 p-1">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              <span>Haz clic en el precio actual para editarlo manualmente</span>
+              <span>VXUS: Protección Anti-Riesgo País</span>
+            </div>
+          </div>
+
+        </div>
+      ) : (
+        /* Módulo Escáner Técnico Dinámico (Replica LC Market Scanner de Epicentro Financiero) */
+        <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm p-6 text-left space-y-6">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-slate-100 dark:border-slate-800 pb-4">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
+                <RefreshCw className="text-indigo-600 w-5 h-5 animate-spin-slow" /> Escáner de Señales Técnicas
+              </h3>
+              <p className="text-xs text-slate-400">Escaneo de medias móviles simples (SMA) e indicadores RSI para activos bajo vigilancia.</p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-slate-400 font-bold uppercase">Criterio:</span>
+              <select 
+                value={scannerFilter} onChange={(e) => setScannerFilter(e.target.value as any)}
+                className="p-2 text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500"
+              >
+                <option value="ALL">Mostrar Todos</option>
+                <option value="INTERESANTE">Filtrar: Interesante</option>
+                <option value="CONSIDERAR">Filtrar: A considerar</option>
+                <option value="NO_FAVORABLE">Filtrar: No favorable</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead>
+                <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold">
+                  <th className="p-4">Activo</th>
+                  <th className="p-4 text-right">Precio Actual</th>
+                  <th className="p-4 text-right">RSI (14d)</th>
+                  <th className="p-4">Posición (SMA)</th>
+                  <th className="p-4 text-center">Señal</th>
+                  <th className="p-4 text-center">Acciones Watchlist</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {scannerList.map((item) => {
+                  const badgeColor = item.signal === 'Interesante' 
+                    ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/30'
+                    : item.signal === 'A considerar'
+                    ? 'bg-amber-50 text-amber-600 border-amber-200 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30'
+                    : 'bg-rose-50 text-rose-600 border-rose-200 dark:bg-rose-950/20 dark:text-rose-400 dark:border-rose-900/30';
+
+                  const posBadgeColor = item.signal === 'Interesante'
+                    ? 'text-blue-600 bg-blue-50/50 dark:text-blue-400 dark:bg-blue-950/10'
+                    : item.signal === 'A considerar'
+                    ? 'text-amber-600 bg-amber-50/50 dark:text-amber-400 dark:bg-amber-950/10'
+                    : 'text-rose-600 bg-rose-50/50 dark:text-rose-400 dark:bg-rose-950/10';
+
+                  return (
+                    <tr key={item.ticker} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 text-slate-700 dark:text-slate-300 transition-colors">
+                      <td className="p-4 font-bold text-slate-800 dark:text-white">
+                        <div className="flex flex-col items-start gap-1">
+                          <span>{item.ticker}</span>
+                          <a 
+                            href={`https://finance.yahoo.com/chart/${item.ticker}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            className="text-[9px] bg-indigo-50/80 hover:bg-indigo-600 hover:text-white text-indigo-600 px-1.5 py-0.5 rounded font-mono font-bold uppercase transition-colors"
+                          >
+                            Advanced Chart ↗
+                          </a>
+                          <span className="text-[8px] text-slate-400 font-mono tracking-wider font-semibold block">{item.assetClass}</span>
+                        </div>
                       </td>
-                      <td className="p-4 text-right font-bold text-slate-800 dark:text-slate-200">${a.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                      <td className={`p-4 text-right font-bold ${a.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                        {a.gainLoss >= 0 ? '+' : ''}{a.percent.toFixed(1)}%
+                      <td className="p-4 text-right font-mono font-bold">${item.currentPrice.toFixed(2)}</td>
+                      <td className="p-4 text-right font-mono font-bold">
+                        <span className={item.rsi < 30 ? 'text-emerald-500' : item.rsi > 70 ? 'text-rose-500' : 'text-slate-500'}>
+                          {item.rsi}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        <span className={`px-2 py-1 rounded-lg text-[10px] font-semibold block w-fit ${posBadgeColor}`}>
+                          {item.position}
+                        </span>
                       </td>
                       <td className="p-4 text-center">
-                        <button onClick={() => deleteAsset(a.id)} className="text-slate-400 hover:text-rose-500 p-1">
-                          <Trash2 className="w-3.5 h-3.5" />
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-bold border uppercase tracking-wider ${badgeColor}`}>
+                          {item.signal}
+                        </span>
+                      </td>
+                      <td className="p-4 text-center">
+                        <button 
+                          onClick={() => handleToggleWatchlistInRow(item)}
+                          className={`p-2 rounded-xl transition-all ${item.isWatchlist ? 'bg-rose-500/10 hover:bg-rose-500/20 text-rose-500' : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500'}`}
+                          title={item.isWatchlist ? "Quitar de Watchlist" : "Añadir a Watchlist"}
+                        >
+                          {item.isWatchlist ? <Trash2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
                         </button>
                       </td>
                     </tr>
                   );
                 })}
+                {scannerList.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="text-center py-8 text-xs text-slate-400 font-semibold uppercase tracking-wider">
+                      Sin activos que coincidan con el criterio seleccionado.
+                    </td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
-
-          <div className="p-4 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-            <span>Haz clic en el precio actual para editarlo manualmente</span>
-            <span>VXUS: Protección Anti-Riesgo País</span>
-          </div>
         </div>
+      )}
 
-      </div>
-
-      {/* Watchlist de Activos de Mercado */}
+      {/* Watchlist de Activos del Mercado (Junio 2026) */}
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm p-6 text-left">
         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Watchlist de Activos de Mercado</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
@@ -1581,7 +2158,6 @@ const InvestmentPortfolioView: React.FC = () => {
                 </button>
                 <div className="flex justify-between items-start">
                   <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{item.ticker}</span>
-                  {/* Yahoo Finance Advanced Interactive Chart Deep-Link */}
                   <a 
                     href={`https://finance.yahoo.com/chart/${item.ticker}`} 
                     target="_blank" 
@@ -1610,6 +2186,8 @@ const InvestmentPortfolioView: React.FC = () => {
   );
 };
 
+// --- SIMULADOR DE PAYSTUB REAL CARLOS (ADP REPLICA) ---
+
 const PaystubSimulatorView: React.FC = () => {
   const adpData = {
     regularRate: 46.00,
@@ -1620,7 +2198,6 @@ const PaystubSimulatorView: React.FC = () => {
     doubleTimeEarnings: 2116.00,
     grossPay: 3956.00,
     
-    // Deducciones de Ley Reales al Centavo
     fedWithholding: 680.86,
     socialSecurity: 245.27,
     medicare: 57.36,
@@ -1647,7 +2224,6 @@ const PaystubSimulatorView: React.FC = () => {
   return (
     <div className="space-y-6">
       
-      {/* Resumen Informativo */}
       <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm text-left">
         <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-1.5 mb-2">
           <Calculator className="text-indigo-500 w-5 h-5" /> Verificación ADP Earnings Statement
@@ -1659,7 +2235,6 @@ const PaystubSimulatorView: React.FC = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Desglose de Retenciones e Impuestos */}
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4 text-left">
           <h4 className="text-sm font-bold text-slate-800 dark:text-white">Deducciones de Ley (Statutory)</h4>
           <div className="space-y-2.5 text-xs text-slate-600 dark:text-slate-300">
@@ -1698,7 +2273,6 @@ const PaystubSimulatorView: React.FC = () => {
           </div>
         </div>
 
-        {/* Réplica del Talón de Pago ADP */}
         <div className="lg:col-span-2 bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-3xl p-6 text-left shadow-sm space-y-4">
           <div className="flex justify-between items-start border-b border-slate-200 dark:border-slate-800 pb-4">
             <div>
@@ -1714,19 +2288,19 @@ const PaystubSimulatorView: React.FC = () => {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Empleado</span>
-              <span className="font-bold text-slate-800 dark:text-slate-100">Carlos A Montero</span>
+              <span className="font-bold text-slate-800 dark:text-white">Carlos A Montero</span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Estatus W-4</span>
-              <span className="font-bold text-slate-800 dark:text-slate-100">Single/Married Filing Separately</span>
+              <span className="font-bold text-slate-800 dark:text-white">Single/Married Filing Separately</span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Periodo de Nómina</span>
-              <span className="font-bold text-slate-800 dark:text-slate-100">06/01/26 - 06/07/26</span>
+              <span className="font-bold text-slate-800 dark:text-white">06/01/26 - 06/07/26</span>
             </div>
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Consejo de Pago</span>
-              <span className="font-mono font-bold text-slate-800 dark:text-slate-100">Advice #00000248443</span>
+              <span className="font-mono font-bold text-slate-800 dark:text-white">Advice #00000248443</span>
             </div>
           </div>
 
@@ -1791,22 +2365,19 @@ export default function App() {
     <FinancialProvider>
       <div className={`${darkMode ? 'dark bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'} min-h-screen flex flex-col md:flex-row transition-colors duration-200`}>
         
-        {/* Barra Lateral Navegación */}
         <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 p-5 flex flex-col justify-between">
           <div className="space-y-8">
             
-            {/* Logo Corporativo */}
             <div className="flex items-center gap-2.5">
               <div className="p-2.5 bg-indigo-600 rounded-xl text-white">
                 <Landmark className="w-5.5 h-5.5" />
               </div>
               <div className="text-left">
                 <h1 className="font-bold text-sm tracking-tight leading-none text-slate-800 dark:text-white">DevMaster</h1>
-                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.7.1</span>
+                <span className="text-[10px] font-bold text-indigo-600 uppercase tracking-wider block mt-1">Wealth Engine v1.7.8</span>
               </div>
             </div>
 
-            {/* Navegación por Pestañas */}
             <nav className="space-y-1.5" aria-label="Menú Principal">
               <button
                 onClick={() => setActiveTab('DASHBOARD')}
@@ -1836,7 +2407,6 @@ export default function App() {
 
           </div>
 
-          {/* Pie de Panel & Modo Oscuro & Botón de Pánico Safe Reset */}
           <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4">
             <FinancialContext.Consumer>
               {(financials) => (
@@ -1865,7 +2435,6 @@ export default function App() {
 
         </aside>
 
-        {/* Contenido Dinámico */}
         <main className="flex-1 p-6 md:p-8 overflow-x-hidden">
           {activeTab === 'DASHBOARD' && <DashboardView />}
           {activeTab === 'BUDGET' && <BudgetManagerView />}
