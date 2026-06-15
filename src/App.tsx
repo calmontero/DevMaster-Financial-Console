@@ -3,9 +3,6 @@
  * DevMaster Wealth Engine - Financial Console
  * Version: 1.7.8-STABLE (HMR Optimized - Ohio Edition)
  * Last Updated: June 14, 2026
- * 
- * 
- * 
  * ============================================================================
  */
 
@@ -36,6 +33,7 @@ import {
   X,
   Plus
 } from 'lucide-react';
+
 
 type TransactionType = 'INCOME' | 'EXPENSE';
 type AssetType = 'STOCKS' | 'CRYPTO' | 'FIXED_INCOME' | 'CASH';
@@ -93,6 +91,48 @@ interface FinancialState {
   paystubConfig: PaystubConfig;
   lastCsvFileName?: string;
   lastCsvUploadDate?: string;
+}
+
+interface CategoryDistItem {
+  category: string;
+  amount: number;
+  percentage: number;
+}
+
+interface ScannerListItem {
+  ticker: string;
+  name: string;
+  currentPrice: number;
+  prevPrice?: number;
+  rsi: number;
+  position: string;
+  signal: 'Interesante' | 'A considerar' | 'No favorable';
+  assetClass: 'STOCK' | 'ETF';
+  isPortfolio: boolean;
+  isWatchlist: boolean;
+}
+
+interface FinancialContextType {
+  state: FinancialState;
+  addTransaction: (t: Omit<Transaction, 'id' | 'date'>) => void;
+  addManyTransactions: (payload: Transaction[], fileName: string, uploadDate: string) => void;
+  deleteTransaction: (id: string) => void;
+  clearAllTransactions: () => void;
+  addAsset: (a: Omit<InvestmentAsset, 'id'>) => void;
+  updateAssetPrice: (id: string, currentPrice: number) => void;
+  deleteAsset: (id: string) => void;
+  updateLiquidCash: (account: keyof BankAccounts, amount: number) => void;
+  executeLimitOrder: (assetName: string, shares: number, price: number) => boolean;
+  transferFunds: (from: keyof BankAccounts, to: keyof BankAccounts, amount: number) => boolean;
+  setBudgetLimit: (limit: number) => void;
+  setEmergencyGoal: (goal: number) => void;
+  updatePaystubConfig: (config: Partial<PaystubConfig>) => void;
+  resetAllData: () => void;
+  importBackup: (payload: FinancialState) => void;
+  addToWatchlist: (ticker: string, name: string, currentPrice: number) => void;
+  removeFromWatchlist: (ticker: string) => void;
+  isLiveFeed: boolean;
+  setIsLiveFeed: React.Dispatch<React.SetStateAction<boolean>>;
 }
 
 type FinancialAction =
@@ -187,6 +227,7 @@ const initialCarlosState: FinancialState = {
     dependents: 1
   }
 };
+
 
 const normalizeDate = (rawDate: string): string => {
   const clean = rawDate.trim().replace(/"/g, '');
@@ -285,12 +326,13 @@ const classifyTransaction = (desc: string, amount: number): { category: Transact
   return { type, category: 'Otros', subcategory: 'Varios' };
 };
 
+
 const processZeroSumTransaction = (
   tx: Transaction,
   accounts: BankAccounts,
   assets: InvestmentAsset[],
   isUndo: boolean = false
-) => {
+): { accounts: BankAccounts; assets: InvestmentAsset[] } => {
   const adjAmount = isUndo ? -tx.amount : tx.amount;
   const cleanDesc = tx.description.toLowerCase();
   
@@ -302,7 +344,7 @@ const processZeroSumTransaction = (
       updatedAccounts.robinhoodCash = Number((updatedAccounts.robinhoodCash + adjAmount).toFixed(2));
       
       const assetName = 'Robinhood Buying Power';
-      const existingIndex = updatedAssets.findIndex(a => a.name.toUpperCase() === assetName.toUpperCase());
+      const existingIndex = updatedAssets.findIndex((a: InvestmentAsset) => a.name.toUpperCase() === assetName.toUpperCase());
       if (existingIndex > -1) {
         const newQty = Number((updatedAssets[existingIndex].quantity + adjAmount).toFixed(6));
         if (newQty <= 0) {
@@ -329,7 +371,7 @@ const processZeroSumTransaction = (
       updatedAccounts.marcus = Number((updatedAccounts.marcus + adjAmount).toFixed(2));
       
       const assetName = 'Marcus Savings';
-      const existingIndex = updatedAssets.findIndex(a => a.name.toUpperCase() === assetName.toUpperCase());
+      const existingIndex = updatedAssets.findIndex((a: InvestmentAsset) => a.name.toUpperCase() === assetName.toUpperCase());
       if (existingIndex > -1) {
         const newQty = Number((updatedAssets[existingIndex].quantity + adjAmount).toFixed(6));
         if (newQty <= 0) {
@@ -355,6 +397,7 @@ const processZeroSumTransaction = (
   }
   return { accounts: updatedAccounts, assets: updatedAssets };
 };
+
 
 const financialReducer = (state: FinancialState, action: FinancialAction): FinancialState => {
   switch (action.type) {
@@ -386,14 +429,14 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
       let tempAccounts = { ...state.accounts };
       let tempAssets = [...state.assets];
 
-      action.payload.transactions.forEach(tx => {
+      action.payload.transactions.forEach((tx: Transaction) => {
         if (tx.type === 'INCOME') tempWF += tx.amount;
         else tempWF -= tx.amount;
       });
       
       tempAccounts.wellsFargo = Number(tempWF.toFixed(2));
 
-      action.payload.transactions.forEach(tx => {
+      action.payload.transactions.forEach((tx: Transaction) => {
         const processed = processZeroSumTransaction(tx, tempAccounts, tempAssets, false);
         tempAccounts = processed.accounts;
         tempAssets = processed.assets;
@@ -409,7 +452,7 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
       };
     }
     case 'DELETE_TRANSACTION': {
-      const tx = state.transactions.find(t => t.id === action.payload);
+      const tx = state.transactions.find((t: Transaction) => t.id === action.payload);
       if (!tx) return state;
       const isIncome = tx.type === 'INCOME';
       const reversedWF = isIncome
@@ -423,7 +466,7 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
 
       return {
         ...state,
-        transactions: state.transactions.filter(t => t.id !== action.payload),
+        transactions: state.transactions.filter((t: Transaction) => t.id !== action.payload),
         accounts: processed.accounts,
         assets: processed.assets
       };
@@ -446,17 +489,17 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
     case 'UPDATE_ASSET_PRICE':
       return {
         ...state,
-        assets: state.assets.map(asset =>
+        assets: state.assets.map((asset: InvestmentAsset) =>
           asset.id === action.payload.id 
             ? { ...asset, prevPrice: asset.currentPrice, currentPrice: action.payload.currentPrice } 
             : asset
         ),
       };
     case 'DELETE_ASSET':
-      return { ...state, assets: state.assets.filter(a => a.id !== action.payload) };
+      return { ...state, assets: state.assets.filter((a: InvestmentAsset) => a.id !== action.payload) };
     case 'EXECUTE_LIMIT_ORDER': {
       if (state.accounts.robinhoodCash < action.payload.totalCost) return state;
-      const existingAssetIndex = state.assets.findIndex(a => a.name.toUpperCase() === action.payload.assetName.toUpperCase());
+      const existingAssetIndex = state.assets.findIndex((a: InvestmentAsset) => a.name.toUpperCase() === action.payload.assetName.toUpperCase());
       let updatedAssets = [...state.assets];
 
       if (existingAssetIndex > -1) {
@@ -518,19 +561,19 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
     case 'UPDATE_PAYSTUB_CONFIG':
       return { ...state, paystubConfig: { ...state.paystubConfig, ...action.payload } };
     case 'ADD_WATCHLIST_ITEM':
-      if (state.watchlist.some(w => w.ticker.toUpperCase() === action.payload.ticker.toUpperCase())) return state;
+      if (state.watchlist.some((w: WatchlistItem) => w.ticker.toUpperCase() === action.payload.ticker.toUpperCase())) return state;
       return { ...state, watchlist: [...state.watchlist, action.payload] };
     case 'REMOVE_WATCHLIST_ITEM':
-      return { ...state, watchlist: state.watchlist.filter(w => w.ticker !== action.payload) };
+      return { ...state, watchlist: state.watchlist.filter((w: WatchlistItem) => w.ticker !== action.payload) };
     case 'TICK_MARKET_PRICES':
       return {
         ...state,
-        assets: state.assets.map(asset => {
+        assets: state.assets.map((asset: InvestmentAsset) => {
           const changePercent = (Math.random() * 0.40 - 0.18) / 100;
           const newPrice = Number(Math.max(0.01, asset.currentPrice * (1 + changePercent)).toFixed(2));
           return { ...asset, prevPrice: asset.currentPrice, currentPrice: newPrice };
         }),
-        watchlist: state.watchlist.map(item => {
+        watchlist: state.watchlist.map((item: WatchlistItem) => {
           const changePercent = (Math.random() * 0.40 - 0.18) / 100;
           const newPrice = Number(Math.max(0.01, item.currentPrice * (1 + changePercent)).toFixed(2));
           return { ...item, prevPrice: item.currentPrice, currentPrice: newPrice };
@@ -542,6 +585,7 @@ const financialReducer = (state: FinancialState, action: FinancialAction): Finan
 };
 
 const FinancialContext = createContext<FinancialContextType | undefined>(undefined);
+
 
 const loadResilientState = (): FinancialState => {
   try {
@@ -565,7 +609,6 @@ const loadResilientState = (): FinancialState => {
   }
 };
 
-// CORREGIDO: Se remueve el export para habilitar Vite Fast Refresh (HMR)
 const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(financialReducer, initialCarlosState, () => loadResilientState());
   const [isLiveFeed, setIsLiveFeed] = useState<boolean>(true);
@@ -633,22 +676,22 @@ const FinancialProvider: React.FC<{ children: React.ReactNode }> = ({ children }
   );
 };
 
-// CORREGIDO: Se remueve el export para evitar la invalidación de HMR por exportar funciones/hooks no-componentes
 const useFinancials = () => {
   const context = useContext(FinancialContext);
   if (!context) throw new Error('useFinancials debe usarse bajo el FinancialProvider');
   return context;
 };
 
+
 const useDynamicPeriods = (transactions: Transaction[]) => {
   return useMemo(() => {
     const uniqueMonths = Array.from(
       new Set(
         transactions
-          .map(t => t.date.substring(0, 7))
-          .filter(d => /^\d{4}-\d{2}$/.test(d))
+          .map((t: Transaction) => t.date.substring(0, 7))
+          .filter((d: string) => /^\d{4}-\d{2}$/.test(d))
       )
-    ).sort((a, b) => b.localeCompare(a));
+    ).sort((a: string, b: string) => b.localeCompare(a));
 
     const currentMonth = uniqueMonths[0] || '2026-06';
     const previousMonth = uniqueMonths[1] || '2026-05';
@@ -671,6 +714,7 @@ const useDynamicPeriods = (transactions: Transaction[]) => {
   }, [transactions]);
 };
 
+
 const DashboardView: React.FC = () => {
   const { state, updateLiquidCash, importBackup } = useFinancials();
   const [editingAccount, setEditingAccount] = useState<keyof BankAccounts | null>(null);
@@ -679,17 +723,17 @@ const DashboardView: React.FC = () => {
   const periods = useDynamicPeriods(state.transactions);
 
   const analytics = useMemo(() => {
-    const totalPortfolioValue = state.assets.reduce((sum, a) => sum + (a.quantity * a.currentPrice), 0);
+    const totalPortfolioValue = state.assets.reduce((sum: number, a: InvestmentAsset) => sum + (a.quantity * a.currentPrice), 0);
     const totalLiquidCash = state.accounts.wellsFargo + state.accounts.bofA + state.accounts.marcus + state.accounts.robinhoodCash;
     const netWorth = totalPortfolioValue + totalLiquidCash;
 
     const monthlyIncome = state.transactions
-      .filter(t => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const monthlyExpenses = state.transactions
-      .filter(t => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const savingsRate = monthlyIncome > 0 ? ((monthlyIncome - monthlyExpenses) / monthlyIncome) * 100 : 0;
 
@@ -759,37 +803,37 @@ const DashboardView: React.FC = () => {
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase">Patrimonio Neto</span>
+            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase font-sans">Patrimonio Neto</span>
             <DollarSign className="w-5 h-5 text-emerald-500" />
           </div>
-          <p className="text-2xl font-bold text-slate-800 dark:text-white text-left">${analytics.netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold text-slate-800 dark:text-white text-left font-mono">${analytics.netWorth.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           <span className="text-[10px] text-slate-400 block text-left">Vigencia: 14 de junio, 2026</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left">Ingresos de {periods.currentMonthLabel}</span>
+            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left font-sans">Ingresos de {periods.currentMonthLabel}</span>
             <TrendingUp className="w-5 h-5 text-emerald-500" />
           </div>
-          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 text-left">${analytics.monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold text-emerald-600 dark:text-emerald-400 text-left font-mono">${analytics.monthlyIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
           <span className="text-xs text-slate-400 block text-left font-mono">{periods.currentMonthLabel}</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left">Gastos de {periods.currentMonthLabel}</span>
+            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left font-sans">Gastos de {periods.currentMonthLabel}</span>
             <TrendingDown className="w-5 h-5 text-rose-500" />
           </div>
-          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 text-left">${analytics.monthlyExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+          <p className="text-2xl font-bold text-rose-600 dark:text-rose-400 text-left font-mono">${analytics.monthlyExpenses.toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
           <span className="text-xs text-slate-400 block text-left font-mono">{periods.currentMonthLabel}</span>
         </div>
 
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <div className="flex justify-between items-center mb-3">
-            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left">Tasa de Ahorro</span>
+            <span className="text-xs font-semibold tracking-wider text-slate-400 uppercase text-left font-sans">Tasa de Ahorro</span>
             <PieIcon className="w-5 h-5 text-indigo-500" />
           </div>
-          <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 text-left">{analytics.savingsRate.toFixed(1)}%</p>
+          <p className="text-2xl font-bold text-indigo-600 dark:text-indigo-400 text-left font-mono">{analytics.savingsRate.toFixed(1)}%</p>
           <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full mt-2">
             <div className="bg-indigo-600 dark:bg-indigo-400 h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(analytics.savingsRate, 100)}%` }}></div>
           </div>
@@ -802,17 +846,17 @@ const DashboardView: React.FC = () => {
         <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm flex flex-col justify-between">
           <div className="space-y-4">
             <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
-              <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez (Editable)
+              <Coins className="text-amber-500 w-5 h-5" /> Distribución de Liquidez
             </h3>
             <div className="space-y-3 text-left">
               {(['wellsFargo', 'bofA', 'marcus', 'robinhoodCash'] as const).map(acc => (
                 <div key={acc} className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-800/40 group relative">
                   <div>
-                    <p className="text-xs text-slate-400 font-semibold uppercase">
+                    <p className="text-xs text-slate-400 font-semibold uppercase font-sans">
                       {acc === 'wellsFargo' ? 'Wells Fargo' : acc === 'bofA' ? 'BofA' : acc === 'marcus' ? 'Marcus HYSA' : 'Robinhood Power'}
                     </p>
-                    {acc === 'marcus' && <p className="text-[10px] text-amber-600 font-bold">3.50% APY</p>}
-                    {acc === 'robinhoodCash' && <p className="text-[10px] text-indigo-600 font-bold">3.75% APY</p>}
+                    {acc === 'marcus' && <p className="text-[10px] text-amber-600 font-bold font-mono">3.50% APY</p>}
+                    {acc === 'robinhoodCash' && <p className="text-[10px] text-indigo-600 font-bold font-mono">3.75% APY</p>}
                   </div>
                   
                   {editingAccount === acc ? (
@@ -822,11 +866,11 @@ const DashboardView: React.FC = () => {
                       onChange={(e) => setTempAmount(e.target.value)}
                       onBlur={() => saveCashUpdate(acc)}
                       onKeyDown={(e) => e.key === 'Enter' && saveCashUpdate(acc)}
-                      className="w-24 p-1 text-right text-xs bg-transparent border border-indigo-500 rounded font-bold text-slate-800 dark:text-white focus:outline-none"
+                      className="w-24 p-1 text-right text-xs bg-transparent border border-indigo-500 rounded font-bold text-slate-800 dark:text-white focus:outline-none font-mono"
                       autoFocus
                     />
                   ) : (
-                    <span onClick={() => handleEditCash(acc)} className="text-md font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-indigo-600 flex items-center gap-1">
+                    <span onClick={() => handleEditCash(acc)} className="text-md font-bold text-slate-800 dark:text-slate-100 cursor-pointer hover:text-indigo-600 flex items-center gap-1 font-mono">
                       ${state.accounts[acc].toLocaleString()}
                       <Plus className="w-3.5 h-3.5 opacity-0 group-hover:opacity-100 transition-opacity" />
                     </span>
@@ -846,17 +890,17 @@ const DashboardView: React.FC = () => {
             <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2 mb-2">
               <ShieldCheck className="text-emerald-500 w-5 h-5" /> Escudo Financiero
             </h3>
-            <p className="text-xs text-slate-400 leading-relaxed">
+            <p className="text-xs text-slate-400 leading-relaxed font-sans">
               Tu colchón estratégico para blindar a tu familia en Ohio de contingencias imprevistas sin tocar tu portafolio de inversión.
             </p>
             <div className="grid grid-cols-2 gap-4 mt-4">
               <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Sueldo Resguardado</span>
-                <span className="text-md font-bold text-slate-800 dark:text-white">${state.accounts.marcus.toLocaleString()}</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block font-sans">Sueldo Resguardado</span>
+                <span className="text-md font-bold text-slate-800 dark:text-white font-mono">${state.accounts.marcus.toLocaleString()}</span>
               </div>
               <div className="p-3 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                <span className="text-[10px] uppercase font-bold text-slate-400 block">Meta Estratégica</span>
-                <span className="text-md font-bold text-slate-800 dark:text-white">${state.emergencyFundGoal.toLocaleString()}</span>
+                <span className="text-[10px] uppercase font-bold text-slate-400 block font-sans">Meta Estratégica</span>
+                <span className="text-md font-bold text-slate-800 dark:text-white font-mono">${state.emergencyFundGoal.toLocaleString()}</span>
               </div>
             </div>
           </div>
@@ -864,13 +908,13 @@ const DashboardView: React.FC = () => {
           <div className="space-y-1.5 mt-4">
             <div className="w-full bg-slate-100 dark:bg-slate-800 h-3 rounded-full overflow-hidden">
               <div 
-                className="bg-emerald-50 h-full rounded-full transition-all duration-500"
+                className="bg-emerald-550 h-full rounded-full transition-all duration-500"
                 style={{ width: `${state.emergencyFundGoal > 0 ? Math.min((state.accounts.marcus / state.emergencyFundGoal) * 100, 100) : 0}%` }}
               ></div>
             </div>
-            <div className="flex justify-between text-xs font-semibold">
+            <div className="flex justify-between text-xs font-semibold font-sans">
               <span className="text-slate-400">Progreso de Cobertura</span>
-              <span className="text-emerald-600 dark:text-emerald-400">
+              <span className="text-emerald-600 dark:text-emerald-400 font-bold font-mono">
                 {state.emergencyFundGoal > 0 ? ((state.accounts.marcus / state.emergencyFundGoal) * 100).toFixed(0) : 0}% Cubierto
               </span>
             </div>
@@ -893,7 +937,7 @@ const DashboardView: React.FC = () => {
                 strokeDashoffset={`-${analytics.netWorth > 0 ? (analytics.totalPortfolioValue / analytics.netWorth) * 100 : 0}`} />
             </svg>
           </div>
-          <div className="flex justify-center gap-6 text-xs font-semibold text-slate-700 dark:text-slate-300">
+          <div className="flex justify-center gap-6 text-xs font-semibold text-slate-700 dark:text-slate-300 font-sans">
             <div className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-indigo-500 block"></span>
               <span>Inversiones ({analytics.netWorth > 0 ? ((analytics.totalPortfolioValue / analytics.netWorth) * 100).toFixed(0) : 0}%)</span>
@@ -909,6 +953,7 @@ const DashboardView: React.FC = () => {
     </div>
   );
 };
+
 
 const BudgetManagerView: React.FC = () => {
   const { state, addTransaction, addManyTransactions, deleteTransaction, clearAllTransactions, transferFunds, setBudgetLimit } = useFinancials();
@@ -938,37 +983,37 @@ const BudgetManagerView: React.FC = () => {
 
   const stats = useMemo(() => {
     const curIncome = state.transactions
-      .filter(t => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'INCOME' && t.date.startsWith(periods.currentMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const curExpenses = state.transactions
-      .filter(t => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const prevIncome = state.transactions
-      .filter(t => t.type === 'INCOME' && t.date.startsWith(periods.previousMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'INCOME' && t.date.startsWith(periods.previousMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const prevExpenses = state.transactions
-      .filter(t => t.type === 'EXPENSE' && t.date.startsWith(periods.previousMonth))
-      .reduce((sum, t) => sum + t.amount, 0);
+      .filter((t: Transaction) => t.type === 'EXPENSE' && t.date.startsWith(periods.previousMonth))
+      .reduce((sum: number, t: Transaction) => sum + t.amount, 0);
 
     const incomeDelta = prevIncome > 0 ? ((curIncome - prevIncome) / prevIncome) * 100 : 0;
     const expensesDelta = prevExpenses > 0 ? ((curExpenses - prevExpenses) / prevExpenses) * 100 : 0;
 
     const categoryTotals = state.transactions
-      .filter(t => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
-      .reduce((acc, t) => {
+      .filter((t: Transaction) => t.type === 'EXPENSE' && t.date.startsWith(periods.currentMonth))
+      .reduce((acc: Record<string, number>, t: Transaction) => {
         acc[t.category] = (acc[t.category] || 0) + t.amount;
         return acc;
       }, {} as Record<string, number>);
 
-    const totalCurExpenses = Object.values(categoryTotals).reduce((sum, v) => sum + v, 0);
+    const totalCurExpenses = (Object.values(categoryTotals) as number[]).reduce((sum: number, v: number) => sum + v, 0);
 
-    const categoriesDistribution = Object.entries(categoryTotals).map(([cat, val]) => {
+    const categoriesDistribution = (Object.entries(categoryTotals) as [string, number][]).map(([cat, val]: [string, number]) => {
       const percentage = totalCurExpenses > 0 ? (val / totalCurExpenses) * 100 : 0;
       return { category: cat, amount: val, percentage };
-    }).sort((a, b) => b.amount - a.amount);
+    }).sort((a: CategoryDistItem, b: CategoryDistItem) => b.amount - a.amount);
 
     return {
       curIncome,
@@ -1065,16 +1110,16 @@ const BudgetManagerView: React.FC = () => {
 
   const renderSubcategoriesBreakdown = (mainCategory: string) => {
     const subTotals = state.transactions
-      .filter(t => t.type === 'EXPENSE' && t.category === mainCategory && t.date.startsWith(periods.currentMonth))
-      .reduce((acc, t) => {
+      .filter((t: Transaction) => t.type === 'EXPENSE' && t.category === mainCategory && t.date.startsWith(periods.currentMonth))
+      .reduce((acc: Record<string, number>, t: Transaction) => {
         const sub = t.subcategory || 'Varios';
         acc[sub] = (acc[sub] || 0) + t.amount;
         return acc;
       }, {} as Record<string, number>);
 
-    return Object.entries(subTotals)
-      .sort((a, b) => b[1] - a[1])
-      .map(([subName, subAmount]) => (
+    return (Object.entries(subTotals) as [string, number][])
+      .sort((a: [string, number], b: [string, number]) => b[1] - a[1])
+      .map(([subName, subAmount]: [string, number]) => (
         <div key={subName} className="flex justify-between items-center text-[11px] text-slate-400 pl-4 py-1 border-l-2 border-slate-200 dark:border-slate-800 font-mono">
           <span>{subName}</span>
           <span>${subAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
@@ -1098,7 +1143,7 @@ const BudgetManagerView: React.FC = () => {
   };
 
   let accumulatedPercent = 0;
-  const pieSlices = stats.categoriesDistribution.map((item) => {
+  const pieSlices = stats.categoriesDistribution.map((item: CategoryDistItem) => {
     const startPercent = accumulatedPercent;
     accumulatedPercent += item.percentage / 100;
     const endPercent = accumulatedPercent;
@@ -1222,7 +1267,7 @@ const BudgetManagerView: React.FC = () => {
             <h3 className="text-md font-bold text-slate-800 dark:text-white">Trasvasar Liquidez</h3>
             <ArrowLeftRight className="w-4 h-4 text-indigo-500" />
           </div>
-          <p className="text-xs text-slate-400">Optimiza tus APYs moviendo los excedentes de Checking (WF/BofA) a Marcus o Robinhood Gold.</p>
+          <p className="text-xs text-slate-400 leading-relaxed font-sans">Optimiza tus APYs moviendo los excedentes de Checking (WF/BofA) a Marcus o Robinhood Gold.</p>
           <form onSubmit={handleTransfer} className="space-y-3">
             <div className="grid grid-cols-2 gap-2">
               <div>
@@ -1254,7 +1299,7 @@ const BudgetManagerView: React.FC = () => {
               <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Cantidad a Mover ($)</label>
               <input 
                 type="number" value={transferAmount} onChange={(e) => setTransferAmount(e.target.value)}
-                className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-mono"
                 placeholder="0.00" required 
               />
             </div>
@@ -1287,7 +1332,7 @@ const BudgetManagerView: React.FC = () => {
               <span className="text-xs text-slate-400 font-semibold">Configurar Techo:</span>
               <input 
                 type="number" value={state.monthlyBudgetLimit} onChange={(e) => setBudgetLimit(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-24 p-1.5 border border-slate-200 dark:border-slate-700 rounded-lg text-right font-bold bg-transparent text-slate-800 dark:text-white text-xs"
+                className="w-24 p-1.5 border border-slate-200 dark:border-slate-700 rounded-lg text-right font-bold bg-transparent text-slate-800 dark:text-white text-xs font-mono"
               />
             </div>
           </div>
@@ -1315,7 +1360,7 @@ const BudgetManagerView: React.FC = () => {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="bg-white dark:bg-slate-900 p-6 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm space-y-4">
-            <h3 className="text-md font-bold text-slate-800 dark:text-white">Flujo de Caja Intermensual</h3>
+            <h3 className="text-md font-bold text-slate-800 dark:text-white font-sans">Flujo de Caja Intermensual</h3>
             <p className="text-xs text-slate-400">Análisis comparativo automático de {periods.previousMonthLabel} vs {periods.currentMonthLabel}.</p>
             
             <div className="flex justify-center h-40 items-end gap-6 pt-6 relative border-b border-slate-150 dark:border-slate-800">
@@ -1324,7 +1369,7 @@ const BudgetManagerView: React.FC = () => {
                   <div className="bg-emerald-500/85 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.prevIncome / 5000) * 100, 100)}%` }} title={`Ingreso: $${stats.prevIncome}`}></div>
                   <div className="bg-slate-400 dark:bg-slate-700 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.prevExpenses / 5000) * 100, 100)}%` }} title={`Gasto: $${stats.prevExpenses}`}></div>
                 </div>
-                <span className="text-[10px] font-semibold text-slate-400 truncate max-w-full text-center">{periods.previousMonthLabel}</span>
+                <span className="text-[10px] font-semibold text-slate-400 truncate max-w-full text-center font-mono">{periods.previousMonthLabel}</span>
               </div>
               
               <div className="flex flex-col items-center gap-1.5 w-18">
@@ -1332,20 +1377,20 @@ const BudgetManagerView: React.FC = () => {
                   <div className="bg-emerald-600 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.curIncome / 5000) * 100, 100)}%` }} title={`Ingreso: $${stats.curIncome}`}></div>
                   <div className="bg-rose-500 rounded-t w-5 transition-all duration-500" style={{ height: `${Math.min((stats.curExpenses / 5000) * 100, 100)}%` }} title={`Gasto: $${stats.curExpenses}`}></div>
                 </div>
-                <span className="text-[10px] font-bold text-indigo-500 truncate max-w-full text-center">{periods.currentMonthLabel}</span>
+                <span className="text-[10px] font-bold text-indigo-500 truncate max-w-full text-center font-mono">{periods.currentMonthLabel}</span>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2 text-xs font-semibold pt-1">
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40">
                 <span className="text-[10px] text-slate-400 block mb-0.5">Δ Ingresos:</span>
-                <span className={stats.incomeDelta >= 0 ? "text-emerald-500 font-bold" : "text-rose-500 font-bold"}>
+                <span className={stats.incomeDelta >= 0 ? "text-emerald-500 font-bold font-mono" : "text-rose-500 font-bold font-mono"}>
                   {stats.incomeDelta >= 0 ? '+' : ''}{stats.incomeDelta.toFixed(1)}%
                 </span>
               </div>
               <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40">
                 <span className="text-[10px] text-slate-400 block mb-0.5">Δ Egresos:</span>
-                <span className={stats.expensesDelta <= 0 ? "text-emerald-500 font-bold" : "text-rose-500 font-bold"}>
+                <span className={stats.expensesDelta <= 0 ? "text-emerald-500 font-bold font-mono" : "text-rose-500 font-bold font-mono"}>
                   {stats.expensesDelta >= 0 ? '+' : ''}{stats.expensesDelta.toFixed(1)}%
                 </span>
               </div>
@@ -1357,7 +1402,7 @@ const BudgetManagerView: React.FC = () => {
             <p className="text-xs text-slate-400">Detalle de egresos acumulados para {periods.currentMonthLabel}. Haz clic en la fila para auditar subcategorías.</p>
             
             <div className="space-y-3 pt-1">
-              {stats.categoriesDistribution.map((item) => {
+              {stats.categoriesDistribution.map((item: CategoryDistItem) => {
                 const isExpanded = expandedCategory === item.category;
                 const colorClass = colorsMap[item.category] || '#64748b';
                 
@@ -1371,7 +1416,7 @@ const BudgetManagerView: React.FC = () => {
                         <span className="w-2 h-2 rounded-full inline-block" style={{ backgroundColor: colorClass }}></span>
                         {item.category} {isExpanded ? '▼' : '►'}
                       </span>
-                      <span className="text-slate-400 font-semibold">${item.amount.toLocaleString()} ({item.percentage.toFixed(1)}%)</span>
+                      <span className="text-slate-400 font-semibold font-mono">${item.amount.toLocaleString()} ({item.percentage.toFixed(1)}%)</span>
                     </div>
                     <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden">
                       <div className="h-full rounded-full transition-all duration-300" style={{ width: `${item.percentage}%`, backgroundColor: colorClass }}></div>
@@ -1424,7 +1469,7 @@ const BudgetManagerView: React.FC = () => {
             <h4 className="text-xs font-bold text-slate-400 uppercase">Resumen del Segmento</h4>
             {hoveredSlice ? (
               (() => {
-                const active = pieSlices.find(s => s.category === hoveredSlice);
+                const active = pieSlices.find((s: { category: string }) => s.category === hoveredSlice);
                 return (
                   <div className="p-3 bg-indigo-50/50 dark:bg-indigo-950/20 rounded-xl">
                     <p className="text-sm font-bold text-indigo-600 dark:text-indigo-400">{hoveredSlice}</p>
@@ -1476,18 +1521,18 @@ const BudgetManagerView: React.FC = () => {
             )}
           </div>
           <div className="overflow-y-auto max-h-[300px] divide-y divide-slate-100 dark:divide-slate-800 pr-1">
-            {state.transactions.map((tx) => (
+            {state.transactions.map((tx: Transaction) => (
               <div key={tx.id} className="flex justify-between items-center py-3">
                 <div className="space-y-0.5 text-left">
                   <p className="text-sm font-semibold text-slate-800 dark:text-white">{tx.description}</p>
                   <div className="flex items-center gap-2 text-[10px] text-slate-400">
                     <span className="bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded font-semibold">{tx.category}</span>
                     {tx.subcategory && <span className="bg-indigo-100/50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 px-1.5 py-0.5 rounded font-semibold">{tx.subcategory}</span>}
-                    <span>{tx.date}</span>
+                    <span className="font-mono">{tx.date}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className={`text-sm font-bold ${tx.type === 'INCOME' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}`}>
+                  <span className={`text-sm font-bold font-mono ${tx.type === 'INCOME' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-700 dark:text-slate-300'}`}>
                     {tx.type === 'INCOME' ? '+' : '-'}${tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </span>
                   <button onClick={() => deleteTransaction(tx.id)} className="text-slate-400 hover:text-rose-500 transition-colors p-1" aria-label="Eliminar transacción">
@@ -1497,7 +1542,7 @@ const BudgetManagerView: React.FC = () => {
               </div>
             ))}
             {state.transactions.length === 0 && (
-              <p className="text-center py-8 text-sm text-slate-400">Sin movimientos registrados.</p>
+              <p className="text-center py-8 text-sm text-slate-400 font-semibold font-sans uppercase">Sin movimientos registrados.</p>
             )}
           </div>
         </div>
@@ -1507,6 +1552,7 @@ const BudgetManagerView: React.FC = () => {
     </div>
   );
 };
+
 
 const InvestmentPortfolioView: React.FC = () => {
   const { state, addAsset, updateAssetPrice, deleteAsset, executeLimitOrder, isLiveFeed, setIsLiveFeed, addToWatchlist, removeFromWatchlist } = useFinancials();
@@ -1551,7 +1597,7 @@ const InvestmentPortfolioView: React.FC = () => {
     let totalCost = 0;
     let totalValue = 0;
 
-    const list = state.assets.map(asset => {
+    const list = state.assets.map((asset: InvestmentAsset) => {
       const cost = asset.quantity * asset.buyPrice;
       const value = asset.quantity * asset.currentPrice;
       const gainLoss = value - cost;
@@ -1569,22 +1615,23 @@ const InvestmentPortfolioView: React.FC = () => {
     return { list, totalCost, totalValue, netGain, netPercent };
   }, [state.assets]);
 
+
   const scannerList = useMemo(() => {
     const combinedTickers = new Set<string>();
     
-    state.assets.forEach(a => {
+    state.assets.forEach((a: InvestmentAsset) => {
       if (a.type === 'STOCKS') {
         combinedTickers.add(a.name.toUpperCase());
       }
     });
     
-    state.watchlist.forEach(w => {
+    state.watchlist.forEach((w: WatchlistItem) => {
       combinedTickers.add(w.ticker.toUpperCase());
     });
 
-    return Array.from(combinedTickers).map(ticker => {
-      const portfolioAsset = state.assets.find(a => a.name.toUpperCase() === ticker);
-      const watchAsset = state.watchlist.find(w => w.ticker.toUpperCase() === ticker);
+    return Array.from(combinedTickers).map((ticker: string): ScannerListItem => {
+      const portfolioAsset = state.assets.find((a: InvestmentAsset) => a.name.toUpperCase() === ticker);
+      const watchAsset = state.watchlist.find((w: WatchlistItem) => w.ticker.toUpperCase() === ticker);
 
       const currentPrice = portfolioAsset ? portfolioAsset.currentPrice : (watchAsset ? watchAsset.currentPrice : 100);
       const prevPrice = portfolioAsset ? portfolioAsset.prevPrice : (watchAsset ? watchAsset.prevPrice : 100);
@@ -1595,6 +1642,7 @@ const InvestmentPortfolioView: React.FC = () => {
       const rawRsi = Math.max(10, Math.min(90, 45 + (seed % 35) + (isUp ? 4 : -4)));
       const rsi = Number(rawRsi.toFixed(1));
 
+      // Mapeando valores de posición técnica idénticos a los del screener de la imagen Img01_4.png
       let position = 'Sobre SMA200, SMA100 | Debajo SMA50, SMA20 | Entre SMA100-SMA50';
       let signal: 'Interesante' | 'A considerar' | 'No favorable' = 'A considerar';
 
@@ -1630,7 +1678,7 @@ const InvestmentPortfolioView: React.FC = () => {
         isPortfolio: !!portfolioAsset,
         isWatchlist: !!watchAsset
       };
-    }).filter(item => {
+    }).filter((item: ScannerListItem) => {
       if (scannerFilter === 'ALL') return true;
       if (scannerFilter === 'INTERESANTE') return item.signal === 'Interesante';
       if (scannerFilter === 'CONSIDERAR') return item.signal === 'A considerar';
@@ -1695,7 +1743,7 @@ const InvestmentPortfolioView: React.FC = () => {
     setTimeout(() => setOrderStatus({ status: 'IDLE', msg: '' }), 4000);
   };
 
-  const handleToggleWatchlistInRow = (item: typeof scannerList[0]) => {
+  const handleToggleWatchlistInRow = (item: ScannerListItem) => {
     if (item.isWatchlist) {
       removeFromWatchlist(item.ticker);
     } else {
@@ -1709,26 +1757,25 @@ const InvestmentPortfolioView: React.FC = () => {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-left">
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <span className="text-[10px] tracking-wider uppercase font-bold text-slate-400 block mb-1">Costo Base Inicial</span>
-          <span className="text-xl font-bold text-slate-800 dark:text-white">${summary.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white font-mono">${summary.totalCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
         </div>
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <span className="text-[10px] tracking-wider uppercase font-bold text-slate-400 block mb-1">Valoración de Mercado</span>
-          <span className="text-xl font-bold text-slate-800 dark:text-white">${summary.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
+          <span className="text-xl font-bold text-slate-800 dark:text-white font-mono">${summary.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
         </div>
         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm">
           <span className="text-[10px] tracking-wider uppercase font-bold text-slate-400 block mb-1">Rendimiento Histórico</span>
           <div className="flex items-baseline gap-2">
-            <span className={`text-xl font-bold ${summary.netGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+            <span className={`text-xl font-bold font-mono ${summary.netGain >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
               {summary.netGain >= 0 ? '+' : ''}${summary.netGain.toLocaleString('en-US', { minimumFractionDigits: 2 })}
             </span>
-            <span className={`text-xs font-bold ${summary.netGain >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
+            <span className={`text-xs font-bold font-mono ${summary.netGain >= 0 ? 'text-emerald-500' : 'text-rose-500'}`}>
               ({summary.netPercent.toFixed(2)}%)
             </span>
           </div>
         </div>
       </div>
 
-      {/* Selector de sub-pestaña requerido por Modificaciones.txt */}
       <div className="flex border-b border-slate-100 dark:border-slate-800 pb-px gap-2">
         <button 
           onClick={() => setSubTab('CARTERA')}
@@ -1796,7 +1843,7 @@ const InvestmentPortfolioView: React.FC = () => {
                     </h3>
                     <span className="text-[10px] bg-indigo-50 text-indigo-600 dark:bg-slate-800 dark:text-indigo-400 px-2 rounded-full font-bold">Gold Mode</span>
                   </div>
-                  <p className="text-xs text-slate-400 leading-relaxed">
+                  <p className="text-xs text-slate-400 leading-relaxed font-sans">
                     Ejecuta las compras de Robinhood Gold (**${state.accounts.robinhoodCash.toLocaleString()}** disponibles rindiendo 3.75%).
                   </p>
                   <form onSubmit={handleLaunchLimitOrder} className="space-y-3">
@@ -1813,7 +1860,7 @@ const InvestmentPortfolioView: React.FC = () => {
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Acciones</label>
                         <input 
                           type="number" step="any" value={limitShares} onChange={(e) => setLimitShares(e.target.value)}
-                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
+                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 font-mono"
                           placeholder="0.00" required
                         />
                       </div>
@@ -1821,7 +1868,7 @@ const InvestmentPortfolioView: React.FC = () => {
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio ($)</label>
                         <input 
                           type="number" step="0.01" value={limitPrice} onChange={(e) => setLimitPrice(e.target.value)}
-                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500"
+                          className="w-full p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-indigo-500 font-mono"
                           placeholder="0.00" required
                         />
                       </div>
@@ -1841,7 +1888,7 @@ const InvestmentPortfolioView: React.FC = () => {
                       <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Nombre / Ticker</label>
                       <input 
                         type="text" value={assetName} onChange={(e) => setAssetName(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-bold uppercase font-mono"
                         placeholder="Ej. SCHD, VTV" required
                       />
                     </div>
@@ -1862,7 +1909,7 @@ const InvestmentPortfolioView: React.FC = () => {
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Cantidades</label>
                         <input 
                           type="number" step="any" value={shares} onChange={(e) => setShares(e.target.value)}
-                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-mono"
                           placeholder="0.00" required
                         />
                       </div>
@@ -1870,7 +1917,7 @@ const InvestmentPortfolioView: React.FC = () => {
                         <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Compra ($)</label>
                         <input 
                           type="number" step="0.01" value={price} onChange={(e) => setPrice(e.target.value)}
-                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                          className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-mono"
                           placeholder="0.00" required
                         />
                       </div>
@@ -1890,7 +1937,7 @@ const InvestmentPortfolioView: React.FC = () => {
                       <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Ticker</label>
                       <input 
                         type="text" value={watchTicker} onChange={(e) => setWatchTicker(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-bold uppercase"
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-bold uppercase font-mono"
                         placeholder="Ej. AMD, INTC..." required
                       />
                     </div>
@@ -1903,10 +1950,10 @@ const InvestmentPortfolioView: React.FC = () => {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Base ($) (Autocompletado)</label>
+                      <label className="block text-[10px] uppercase font-bold text-slate-400 mb-1">Precio Base ($)</label>
                       <input 
                         type="number" step="0.01" value={watchPrice} onChange={(e) => setWatchPrice(e.target.value)}
-                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs"
+                        className="w-full p-2 rounded-lg border border-slate-200 dark:border-slate-700 bg-transparent text-slate-800 dark:text-white text-xs font-mono"
                         placeholder="100.00" required
                       />
                     </div>
@@ -1929,7 +1976,7 @@ const InvestmentPortfolioView: React.FC = () => {
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold">
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold font-sans">
                     <th className="p-4">Activo</th>
                     <th className="p-4 text-right">Cantidades</th>
                     <th className="p-4 text-right">Precio Base</th>
@@ -1940,7 +1987,7 @@ const InvestmentPortfolioView: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {summary.list.map(a => {
+                  {summary.list.map((a: InvestmentAsset & { cost: number; value: number; gainLoss: number; percent: number }) => {
                     const hasPriceChanged = a.prevPrice !== undefined && a.prevPrice !== a.currentPrice;
                     const isUp = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice > a.prevPrice;
                     const isDown = hasPriceChanged && a.prevPrice !== undefined && a.currentPrice < a.prevPrice;
@@ -1950,7 +1997,7 @@ const InvestmentPortfolioView: React.FC = () => {
 
                     return (
                       <tr key={a.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 text-slate-700 dark:text-slate-300">
-                        <td className="p-4 font-bold text-slate-800 dark:text-white font-sans">
+                        <td className="p-4 font-bold text-slate-800 dark:text-white">
                           <div className="flex flex-col items-start gap-1">
                             <span>{a.name}</span>
                             <a 
@@ -1965,8 +2012,8 @@ const InvestmentPortfolioView: React.FC = () => {
                             <span className="text-[8px] text-slate-400 font-mono tracking-wider font-semibold block">{assetClass}</span>
                           </div>
                         </td>
-                        <td className="p-4 text-right font-medium">{a.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
-                        <td className="p-4 text-right">${a.buyPrice.toFixed(2)}</td>
+                        <td className="p-4 text-right font-medium font-mono">{a.quantity.toLocaleString('en-US', { maximumFractionDigits: 6 })}</td>
+                        <td className="p-4 text-right font-mono">${a.buyPrice.toFixed(2)}</td>
                         <td className="p-4 text-right">
                           {editingAssetId === a.id ? (
                             <div className="flex items-center justify-end gap-1.5">
@@ -1975,7 +2022,7 @@ const InvestmentPortfolioView: React.FC = () => {
                                 step="0.01"
                                 value={editingPrice}
                                 onChange={(e) => setEditingPrice(e.target.value)}
-                                className="w-20 p-1 border border-indigo-500 rounded bg-white dark:bg-slate-850 text-slate-800 dark:text-white text-xs text-right focus:outline-none"
+                                className="w-20 p-1 border border-indigo-500 rounded bg-white dark:bg-slate-850 text-slate-800 dark:text-white text-xs text-right focus:outline-none font-mono"
                                 onBlur={() => {
                                   const val = parseFloat(editingPrice);
                                   if (!isNaN(val) && val > 0) {
@@ -2015,8 +2062,8 @@ const InvestmentPortfolioView: React.FC = () => {
                             </div>
                           )}
                         </td>
-                        <td className="p-4 text-right font-bold text-slate-800 dark:text-slate-200">${a.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                        <td className={`p-4 text-right font-bold ${a.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        <td className="p-4 text-right font-bold text-slate-800 dark:text-slate-200 font-mono">${a.value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                        <td className={`p-4 text-right font-bold font-mono ${a.gainLoss >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
                           {a.gainLoss >= 0 ? '+' : ''}{a.percent.toFixed(1)}%
                         </td>
                         <td className="p-4 text-center">
@@ -2031,7 +2078,7 @@ const InvestmentPortfolioView: React.FC = () => {
               </table>
             </div>
 
-            <div className="p-4 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-wider font-sans">
               <span>Haz clic en el precio actual para editarlo manualmente</span>
               <span>VXUS: Protección Anti-Riesgo País</span>
             </div>
@@ -2046,10 +2093,10 @@ const InvestmentPortfolioView: React.FC = () => {
               <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-2">
                 <RefreshCw className="text-indigo-600 w-5 h-5 animate-spin-slow" /> Escáner de Señales Técnicas
               </h3>
-              <p className="text-xs text-slate-400">Escaneo de medias móviles simples (SMA) e indicadores RSI para activos bajo vigilancia.</p>
+              <p className="text-xs text-slate-400 font-sans">Escaneo de medias móviles simples (SMA) e indicadores RSI para activos bajo vigilancia.</p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-400 font-bold uppercase">Criterio:</span>
+              <span className="text-xs text-slate-400 font-bold uppercase font-sans">Criterio:</span>
               <select 
                 value={scannerFilter} onChange={(e) => setScannerFilter(e.target.value as any)}
                 className="p-2 text-xs border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white rounded-xl focus:ring-2 focus:ring-indigo-500"
@@ -2063,7 +2110,7 @@ const InvestmentPortfolioView: React.FC = () => {
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+            <table className="w-full text-left text-xs border-collapse font-sans">
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/30 text-[10px] tracking-wider text-slate-400 uppercase font-bold">
                   <th className="p-4">Activo</th>
@@ -2075,7 +2122,7 @@ const InvestmentPortfolioView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                {scannerList.map((item) => {
+                {scannerList.map((item: ScannerListItem) => {
                   const badgeColor = item.signal === 'Interesante' 
                     ? 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-950/20 dark:text-blue-400 dark:border-blue-900/30'
                     : item.signal === 'A considerar'
@@ -2134,7 +2181,7 @@ const InvestmentPortfolioView: React.FC = () => {
                 })}
                 {scannerList.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="text-center py-8 text-xs text-slate-400 font-semibold uppercase tracking-wider">
+                    <td colSpan={6} className="text-center py-8 text-xs text-slate-400 font-semibold uppercase tracking-wider font-sans">
                       Sin activos que coincidan con el criterio seleccionado.
                     </td>
                   </tr>
@@ -2149,7 +2196,7 @@ const InvestmentPortfolioView: React.FC = () => {
       <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-800 shadow-sm p-6 text-left">
         <h3 className="text-lg font-bold text-slate-800 dark:text-white mb-4">Watchlist de Activos de Mercado</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-          {state.watchlist.map(item => {
+          {state.watchlist.map((item: WatchlistItem) => {
             const hasChanged = item.prevPrice !== undefined && item.prevPrice !== item.currentPrice;
             const isUp = hasChanged && item.prevPrice !== undefined && item.currentPrice > item.prevPrice;
             const isDown = hasChanged && item.prevPrice !== undefined && item.currentPrice < item.prevPrice;
@@ -2160,7 +2207,7 @@ const InvestmentPortfolioView: React.FC = () => {
                   <X className="w-3.5 h-3.5" />
                 </button>
                 <div className="flex justify-between items-start">
-                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400">{item.ticker}</span>
+                  <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono">{item.ticker}</span>
                   <a 
                     href={`https://finance.yahoo.com/chart/${item.ticker}`} 
                     target="_blank" 
@@ -2176,8 +2223,8 @@ const InvestmentPortfolioView: React.FC = () => {
                   <span className={`text-md font-mono font-bold transition-all duration-500 px-1.5 py-0.5 rounded ${isUp ? 'text-emerald-600 dark:text-emerald-400 bg-emerald-500/10' : isDown ? 'text-rose-600 dark:text-rose-400 bg-rose-500/10' : 'text-slate-700 dark:text-slate-300'}`}>
                     ${item.currentPrice.toFixed(2)}
                   </span>
-                  {isUp && <span className="text-[10px] text-emerald-500">▲</span>}
-                  {isDown && <span className="text-[10px] text-rose-500">▼</span>}
+                  {isUp && <span className="text-[10px] text-emerald-500 font-mono">▲</span>}
+                  {isDown && <span className="text-[10px] text-rose-500 font-mono">▼</span>}
                 </div>
               </div>
             );
@@ -2189,7 +2236,6 @@ const InvestmentPortfolioView: React.FC = () => {
   );
 };
 
-// --- SIMULADOR DE PAYSTUB REAL CARLOS (ADP REPLICA) ---
 
 const PaystubSimulatorView: React.FC = () => {
   const adpData = {
@@ -2231,7 +2277,7 @@ const PaystubSimulatorView: React.FC = () => {
         <h3 className="text-lg font-bold text-slate-800 dark:text-white flex items-center gap-1.5 mb-2">
           <Calculator className="text-indigo-500 w-5 h-5" /> Verificación ADP Earnings Statement
         </h3>
-        <p className="text-xs text-slate-400 leading-relaxed">
+        <p className="text-xs text-slate-400 leading-relaxed font-sans">
           Historial verificado al periodo finalizado el **07/06/2026** (Fecha de pago: **10/06/2026**). Se detalla tu tarifa base real de **$46.00/hora** con tus 23 horas dobles y deducciones vigentes.
         </p>
       </div>
@@ -2279,16 +2325,16 @@ const PaystubSimulatorView: React.FC = () => {
         <div className="lg:col-span-2 bg-slate-50 dark:bg-slate-900 border-2 border-slate-200 dark:border-slate-800 rounded-3xl p-6 text-left shadow-sm space-y-4">
           <div className="flex justify-between items-start border-b border-slate-200 dark:border-slate-800 pb-4">
             <div>
-              <h2 className="text-xl font-bold tracking-tight text-slate-800 dark:text-white">ELECTRICAL SPECIALISTS INC</h2>
-              <p className="text-[10px] text-slate-400">535 REACH BLVD SUITE 400 • COLUMBUS, OH 43215</p>
+              <h2 className="text-xl font-bold tracking-tight text-slate-800 dark:text-white font-sans">ELECTRICAL SPECIALISTS INC</h2>
+              <p className="text-[10px] text-slate-400 font-sans">535 REACH BLVD SUITE 400 • COLUMBUS, OH 43215</p>
             </div>
             <div className="text-right">
-              <span className="text-xs bg-indigo-600 text-white font-bold px-3 py-1 rounded-full">CONCILIADO ADP</span>
+              <span className="text-xs bg-indigo-600 text-white font-bold px-3 py-1 rounded-full font-sans">CONCILIADO ADP</span>
               <p className="text-xs text-slate-400 font-mono mt-1">Pay date: 06/10/2026</p>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-sans">
             <div>
               <span className="text-[10px] text-slate-400 uppercase font-semibold block">Empleado</span>
               <span className="font-bold text-slate-800 dark:text-white">Carlos A Montero</span>
@@ -2307,7 +2353,7 @@ const PaystubSimulatorView: React.FC = () => {
             </div>
           </div>
 
-          <div className="border-t border-b border-slate-200 dark:border-slate-800 py-3 text-xs">
+          <div className="border-t border-b border-slate-200 dark:border-slate-800 py-3 text-xs font-sans">
             <div className="grid grid-cols-3 font-bold text-slate-400 mb-2 uppercase text-[10px]">
               <span>Earning Description</span>
               <span className="text-right">Rate / Hours</span>
@@ -2329,9 +2375,9 @@ const PaystubSimulatorView: React.FC = () => {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
             <div>
-              <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-2">Informational / Employer Paid Benefits</h5>
+              <h5 className="text-[10px] font-bold text-slate-400 uppercase mb-2 font-sans">Informational / Employer Paid Benefits</h5>
               <div className="grid grid-cols-2 gap-1.5 text-[10px] font-mono text-slate-500">
-                {adpData.benefits.map(b => (
+                {adpData.benefits.map((b: { name: string; amount: number; ytd: number }) => (
                   <div key={b.name} className="flex justify-between bg-slate-100 dark:bg-slate-800/40 p-1.5 rounded">
                     <span>{b.name}:</span>
                     <span className="font-bold">${b.amount.toFixed(2)}</span>
@@ -2340,7 +2386,7 @@ const PaystubSimulatorView: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-col justify-end items-end space-y-2">
+            <div className="flex flex-col justify-end items-end space-y-2 font-sans">
               <div className="text-right w-full">
                 <span className="text-[10px] text-slate-400 uppercase font-semibold">Salario Bruto (Gross):</span>
                 <p className="text-xl font-bold font-mono text-slate-800 dark:text-white">${adpData.grossPay.toFixed(2)}</p>
@@ -2360,6 +2406,7 @@ const PaystubSimulatorView: React.FC = () => {
   );
 };
 
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<Tab>('DASHBOARD');
   const [darkMode, setDarkMode] = useState<boolean>(true);
@@ -2368,7 +2415,7 @@ export default function App() {
     <FinancialProvider>
       <div className={`${darkMode ? 'dark bg-slate-950 text-slate-50' : 'bg-slate-50 text-slate-900'} min-h-screen flex flex-col md:flex-row transition-colors duration-200`}>
         
-        <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 p-5 flex flex-col justify-between">
+        <aside className="w-full md:w-64 bg-white dark:bg-slate-900 border-b md:border-b-0 md:border-r border-slate-100 dark:border-slate-800 p-5 flex flex-col justify-between font-sans">
           <div className="space-y-8">
             
             <div className="flex items-center gap-2.5">
@@ -2431,7 +2478,7 @@ export default function App() {
               <span>{darkMode ? 'Modo Claro' : 'Modo Oscuro'}</span>
               {darkMode ? <Sun className="w-4 h-4 text-amber-400" /> : <Moon className="w-4 h-4 text-slate-700" />}
             </button>
-            <div className="text-[9px] font-mono text-slate-400 dark:text-slate-500 text-left">
+            <div className="text-[9px] font-mono text-slate-400 dark:text-slate-500 text-left uppercase">
               SISTEMA LOCAL-FIRST • COLUMBUS, OHIO
             </div>
           </div>
